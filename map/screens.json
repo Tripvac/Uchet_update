@@ -1,0 +1,494 @@
+{
+  "language_select": {
+    "locale": "all",
+    "buttons": [
+      [
+        {
+          "id": "lang_ru",
+          "action": "set_lang_ru"
+        },
+        {
+          "id": "lang_kz",
+          "action": "set_lang_kz"
+        }
+      ]
+    ]
+  },
+  "subscription": {
+    "buttons": [
+      [
+        {
+          "id": "channel_news",
+          "url_key": "channel_news"
+        }
+      ],
+      [
+        {
+          "id": "chat_accountants",
+          "url_key": "chat_accountants"
+        }
+      ],
+      [
+        {
+          "id": "back",
+          "action": "back"
+        }
+      ],
+      [
+        {
+          "id": "check_subscription",
+          "action": "check_subscription"
+        }
+      ]
+    ]
+  },
+  "socials": {
+    "buttons": [
+      [
+        {
+          "id": "social_youtube",
+          "url_key": "social_youtube"
+        }
+      ],
+      [
+        {
+          "id": "social_tiktok",
+          "url_key": "social_tiktok"
+        }
+      ],
+      [
+        {
+          "id": "social_inst",
+          "url_key": "social_inst"
+        }
+      ],
+      [
+        {
+          "id": "social_site",
+          "url_key": "social_site"
+        }
+      ],
+      [
+        {
+          "id": "back",
+          "action": "back"
+        }
+      ],
+      [
+        {
+          "id": "btn_continue",
+          "action": "main"
+        }
+      ]
+    ]
+  },
+  "main": {
+    "buttons": [
+      [
+        {
+          "id": "btn_not_member",
+          "action": "categories_info"
+        }
+      ],
+      [
+        {
+          "id": "btn_member",
+          "action": "member_categories"
+        }
+      ],
+      [
+        {
+          "id": "btn_about",
+          "action": "about_categories"
+        }
+      ],
+      [
+        {
+          "id": "back",
+          "action": "back"
+        }
+      ]
+    ]
+  },
+  "categories_info": {
+    "buttons": [
+      [
+        {
+          "id": "cat_accountant",
+          "action": "info_accountant"
+        }
+      ],
+      [
+        {
+          "id": "cat_org",
+          "action": "info_org"
+        }
+      ],
+      [
+        {
+          "id": "cat_edu",
+          "action": "info_edu"
+        }
+      ],
+      [
+        {
+          "id": "cat_outsource",
+          "action": "info_outsource"
+        }
+      ],
+      [
+        {
+          "id": "back",
+          "action": "back"
+        }
+      ]
+    ]
+  },
+  "about_categories": {
+    "buttons": [
+      [
+        {
+          "id": "competency_ladder",
+          "action": "competency_ladder"
+        }
+      ],
+      [
+        {
+          "id": "internal_docs",
+          "url_key": "internal_docs"
+        }
+      ],
+      [
+        {
+          "id": "about_website",
+          "url_key": "about_website"
+        }
+      ],
+      [
+        {
+          "id": "cpe_hours",
+          "action": "send_cpe_hours_doc"
+        }
+      ],
+      [
+        {
+          "id": "back",
+          "action": "back"
+        }
+      ]
+    ]
+  },
+  "competency_ladder": {
+    "buttons": [
+      [
+        {
+          "id": "back",
+          "action": "back"
+        }
+      ]
+    ]
+  },
+  "info_accountant": {
+    "buttons": [
+      [
+        {
+          "id": "btn_join",
+          "url_key": "join_form"
+        }
+      ],
+      [
+        {
+          "id": "back",
+          "action": "back"
+        }
+      ]
+    ]
+  },
+  "info_org": {
+    "buttons": [
+      [
+        {
+          "id": "btn_join",
+          "url_key": "whatsapp_manager"
+        }
+      ],
+      [
+        {
+          "id": "back",
+          "action": "back"
+        }
+      ]
+    ]
+  },
+  "info_edu": {
+    "buttons": [
+      [
+        {
+          "id": "btn_join",
+          "url_key": "whatsapp_manager"
+        }
+      ],
+      [
+        {
+          "id": "back",
+          "action": "back"
+        }
+      ]
+    ]
+  },
+  "info_outsource": {
+    "buttons": [
+      [
+        {
+          "id": "btn_join",
+          "url_key": "whatsapp_manager"
+        }
+      ],
+      [
+        {
+          "id": "btn_outsource_request",
+          "url_key": "outsource_form"
+        }
+      ],
+      [
+        {
+          "id": "back",
+          "action": "back"
+        }
+      ]
+    ]
+  },
+  "member_categories": {
+    "buttons": [
+      [
+        {
+          "id": "cat_member_full",
+          "action": "member_topics_full"
+        }
+      ],
+      [
+        {
+          "id": "cat_member_assoc",
+          "action": "member_topics_assoc"
+        }
+      ],
+      [
+        {
+          "id": "cat_member_org",
+          "action": "member_contact_org"
+        }
+      ],
+      [
+        {
+          "id": "cat_member_edu",
+          "action": "member_contact_edu"
+        }
+      ],
+      [
+        {
+          "id": "cat_member_outsource",
+          "action": "member_contact_outsource"
+        }
+      ],
+      [
+        {
+          "id": "back",
+          "action": "back"
+        }
+      ]
+    ]
+  },
+  "member_contact_org": {
+    "buttons": [
+      [
+        {
+          "id": "btn_contact_manager",
+          "url_key": "whatsapp_manager"
+        }
+      ],
+      [
+        {
+          "id": "back",
+          "action": "back"
+        }
+      ]
+    ]
+  },
+  "member_contact_edu": {
+    "buttons": [
+      [
+        {
+          "id": "btn_contact_manager",
+          "url_key": "whatsapp_manager"
+        }
+      ],
+      [
+        {
+          "id": "back",
+          "action": "back"
+        }
+      ]
+    ]
+  },
+  "member_contact_outsource": {
+    "buttons": [
+      [
+        {
+          "id": "btn_contact_manager",
+          "url_key": "whatsapp_manager"
+        }
+      ],
+      [
+        {
+          "id": "back",
+          "action": "back"
+        }
+      ]
+    ]
+  },
+  "member_topics_full": {
+    "buttons": [
+      [
+        {
+          "id": "topic_login",
+          "action": "topic_login"
+        }
+      ],
+      [
+        {
+          "id": "topic_hours",
+          "action": "topic_hours"
+        }
+      ],
+      [
+        {
+          "id": "topic_payment",
+          "action": "topic_payment"
+        }
+      ],
+      [
+        {
+          "id": "back",
+          "action": "back"
+        }
+      ]
+    ]
+  },
+  "member_topics_assoc": {
+    "buttons": [
+      [
+        {
+          "id": "topic_login",
+          "action": "topic_login"
+        }
+      ],
+      [
+        {
+          "id": "topic_payment",
+          "action": "topic_payment"
+        }
+      ],
+      [
+        {
+          "id": "back",
+          "action": "back"
+        }
+      ]
+    ]
+  },
+  "topic_login": {
+    "buttons": [
+      [
+        {
+          "id": "btn_check_membership",
+          "url_key": "login_check_form"
+        }
+      ],
+      [
+        {
+          "id": "back",
+          "action": "back"
+        }
+      ]
+    ]
+  },
+  "topic_hours": {
+    "buttons": [
+      [
+        {
+          "id": "btn_contact_manager",
+          "url_key": "whatsapp_manager"
+        }
+      ],
+      [
+        {
+          "id": "back",
+          "action": "back"
+        }
+      ]
+    ]
+  },
+  "topic_payment": {
+    "buttons": [
+      [
+        {
+          "id": "btn_contact_manager",
+          "url_key": "whatsapp_manager"
+        }
+      ],
+      [
+        {
+          "id": "back",
+          "action": "back"
+        }
+      ]
+    ]
+  },
+  "faq": {
+    "content": "faq_items",
+    "buttons": [
+      [
+        {
+          "id": "faq_prev",
+          "action": "faq_prev",
+          "visible": [
+            "faq_has_prev"
+          ]
+        },
+        {
+          "id": "faq_next",
+          "action": "faq_next",
+          "visible": [
+            "faq_has_next"
+          ]
+        }
+      ],
+      [
+        {
+          "id": "back",
+          "action": "back"
+        }
+      ]
+    ]
+  },
+  "config": {
+    "buttons": [
+      [
+        {
+          "id": "lang_ru",
+          "action": "settings_lang_ru"
+        },
+        {
+          "id": "lang_kz",
+          "action": "settings_lang_kz"
+        }
+      ],
+      [
+        {
+          "id": "back",
+          "action": "back"
+        }
+      ]
+    ]
+  }
+}

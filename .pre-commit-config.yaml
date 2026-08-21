@@ -1,0 +1,13 @@
+repos:
+- repo: https://github.com/astral-sh/ruff-pre-commit
+  rev: v0.5.0
+  hooks:
+    - id: ruff
+      args: [--fix, --exit-non-zero-on-fix]
+    - id: ruff-format
+# Не даём закоммитить секрет повторно: токен уже утекал через .env.example,
+# gitleaks ловит токены/ключи/пароли до попадания в историю (см. SEC-1).
+- repo: https://github.com/gitleaks/gitleaks
+  rev: v8.18.4
+  hooks:
+    - id: gitleaks
