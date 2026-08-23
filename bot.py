@@ -1326,9 +1326,6 @@ def main():
     require_env()  # обрываем старт, если конфигурация неполна (см. SEC-1)
     init_db_pool()
 
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
-    flask_thread.start()
-
     load_dynamic_content()  # теперь get_db_connection() уже определена
 
     # Регистрируем команды в меню Telegram (/start, /faq, /settings)
@@ -1340,50 +1337,63 @@ def main():
     # Один фоновый воркер разбирает очередь статистики (bot_events)
     threading.Thread(target=_events_worker, daemon=True).start()
 
-    # Пул потоков для параллельной обработки апдейтов (разные чаты)
-    EXECUTOR = ThreadPoolExecutor(max_workers=MAX_WORKERS)
+    # Проверяем режим работы: webbook для продакшна (Render) или polling для локальной разработки
+    bot_mode = os.environ.get("BOT_MODE", "polling").lower()
 
-    global LAST_POLL_OK
-    log.info("Бот запущен...")
-    offset = None
-    while True:
-        try:
-            res = HTTP_SESSION.get(
-                API_URL + "getUpdates",
-                params={
-                    "timeout": 30,
-                    "offset": offset,
-                    "allowed_updates": ["message", "callback_query"],
-                },
-                timeout=35,
-            )
-            data = res.json()
-
-            if data.get("ok"):
-                # Успешный цикл — health теперь видит, что polling живой.
-                LAST_POLL_OK = time.time()
-                for update in data["result"]:
-                    EXECUTOR.submit(handle_update, update)
-                    offset = update["update_id"] + 1
-            elif data.get("error_code") == 409:
-                # 409 Conflict = где-то запущен второй инстанс с тем же токеном
-                # (локальная отладка + прод, два деплоя). Оба замолкают —
-                # выносим это отдельным CRITICAL, а не общим «ошибка API».
-                log.critical(
-                    "409 Conflict: запущен второй инстанс бота с тем же токеном. "
-                    "Должен работать ровно один. %s",
-                    data,
+    if bot_mode == "webhook":
+        webhook_url = os.environ.get("WEBHOOK_URL")
+        if webhook_url:
+            # Автоматически устанавливаем вебхук в Telegram при старте
+            set_webhook_url = f"{API_URL}setWebhook?url={webhook_url}/tg/{os.environ.get('WEBHOOK_SECRET', 'secret')}"
+            try:
+                r = HTTP_SESSION.get(set_webhook_url, timeout=10)
+                log.info("Режим WEBHOOK: результат установки -> %s", r.json())
+            except Exception as e:
+                log.error("Не удалось установить вебхук: %s", e)
+        
+        # Запускаем Flask-сервер (он работает в основном потоке на Render)
+        port = int(os.environ.get("PORT", 5000))
+        log.info("Бот запущен в режиме WEBHOOK на порту %d...", port)
+        app.run(host="0.0.0.0", port=port)
+    else:
+        # Локальный режим Polling
+        log.info("Бот запущен в режиме POLLING...")
+        offset = None
+        global LAST_POLL_OK
+        
+        # Пул потоков для параллельной обработки апдейтов
+        executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
+        
+        while True:
+            try:
+                res = HTTP_SESSION.get(
+                    API_URL + "getUpdates",
+                    params={
+                        "timeout": 30,
+                        "offset": offset,
+                        "allowed_updates": ["message", "callback_query"],
+                    },
+                    timeout=35,
                 )
-                time.sleep(5)
-            else:
-                log.error("Telegram API ошибка: %s", data)
-                time.sleep(2)
+                data = res.json()
 
-        except requests.exceptions.Timeout:
-            continue
-        except Exception:
-            log.error("Ошибка цикла polling", exc_info=True)
-            time.sleep(5)
+                if data.get("ok"):
+                    LAST_POLL_OK = time.time()
+                    for update in data["result"]:
+                        executor.submit(handle_update, update)
+                        offset = update["update_id"] + 1
+                elif data.get("error_code") == 409:
+                    log.critical("409 Conflict: запущен второй инстанс бота. %s", data)
+                    time.sleep(5)
+                else:
+                    log.error("Telegram API ошибка: %s", data)
+                    time.sleep(2)
+
+            except requests.exceptions.Timeout:
+                continue
+            except Exception:
+                log.error("Ошибка цикла polling", exc_info=True)
+                time.sleep(5)
 
 
 if __name__ == "__main__":
