@@ -1342,16 +1342,19 @@ def main():
 
     if bot_mode == "webhook":
         webhook_url = os.environ.get("WEBHOOK_URL")
+        webhook_secret = os.environ.get("WEBHOOK_SECRET", "secret")
         if webhook_url:
-            # Автоматически устанавливаем вебхук в Telegram при старте
-            set_webhook_url = f"{API_URL}setWebhook?url={webhook_url}/tg/{os.environ.get('WEBHOOK_SECRET', 'secret')}"
+            # Формируем полный URL с учетом секрета
+            full_webhook_target = f"{webhook_url.rstrip('/')}/tg/{webhook_secret}"
+            set_webhook_url = f"{API_URL}setWebhook?url={full_webhook_target}&secret_token={webhook_secret}"
+            
+            log.info("Регистрация вебхука на адрес: %s", full_webhook_target)
             try:
                 r = HTTP_SESSION.get(set_webhook_url, timeout=10)
                 log.info("Режим WEBHOOK: результат установки -> %s", r.json())
             except Exception as e:
                 log.error("Не удалось установить вебхук: %s", e)
         
-        # Запускаем Flask-сервер (он работает в основном потоке на Render)
         port = int(os.environ.get("PORT", 5000))
         log.info("Бот запущен в режиме WEBHOOK на порту %d...", port)
         app.run(host="0.0.0.0", port=port)
