@@ -1323,28 +1323,25 @@ def set_bot_commands():
 
 
 def main():
-    require_env()  # обрываем старт, если конфигурация неполна (см. SEC-1)
+    require_env()
     init_db_pool()
 
-    load_dynamic_content()  # теперь get_db_connection() уже определена
-
-    # Регистрируем команды в меню Telegram (/start, /faq, /settings)
+    load_dynamic_content()
     set_bot_commands()
-
-    # Самодиагностика: доступен ли бот в каналах подписки (BUG-2)
     check_channels_access()
 
-    # Один фоновый воркер разбирает очередь статистики (bot_events)
     threading.Thread(target=_events_worker, daemon=True).start()
 
-    # Проверяем режим работы: webbook для продакшна (Render) или polling для локальной разработки
+    # Инициализируем глобальный пул потоков для вебхука и polling
+    global EXECUTOR
+    EXECUTOR = ThreadPoolExecutor(max_workers=MAX_WORKERS)
+
     bot_mode = os.environ.get("BOT_MODE", "polling").lower()
 
     if bot_mode == "webhook":
         webhook_url = os.environ.get("WEBHOOK_URL")
         webhook_secret = os.environ.get("WEBHOOK_SECRET", "secret")
         if webhook_url:
-            # Формируем полный URL с учетом секрета
             full_webhook_target = f"{webhook_url.rstrip('/')}/tg/{webhook_secret}"
             set_webhook_url = f"{API_URL}setWebhook?url={full_webhook_target}&secret_token={webhook_secret}"
             
@@ -1364,9 +1361,6 @@ def main():
         offset = None
         global LAST_POLL_OK
         
-        # Пул потоков для параллельной обработки апдейтов
-        executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
-        
         while True:
             try:
                 res = HTTP_SESSION.get(
@@ -1383,7 +1377,7 @@ def main():
                 if data.get("ok"):
                     LAST_POLL_OK = time.time()
                     for update in data["result"]:
-                        executor.submit(handle_update, update)
+                        EXECUTOR.submit(handle_update, update)
                         offset = update["update_id"] + 1
                 elif data.get("error_code") == 409:
                     log.critical("409 Conflict: запущен второй инстанс бота. %s", data)
