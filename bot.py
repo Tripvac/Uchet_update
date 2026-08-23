@@ -7,13 +7,15 @@ import queue
 import re
 import threading
 import time
+import requests
+import os
 from concurrent.futures import ThreadPoolExecutor
 
 import psycopg2
 import psycopg2.pool
 import requests
 from dotenv import load_dotenv
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from psycopg2.extras import RealDictCursor
 from requests.adapters import HTTPAdapter
 
@@ -53,6 +55,10 @@ FAQ_PAGE_SIZE = int(os.getenv("FAQ_PAGE_SIZE", 3))
 # если не задан, notify_admin просто пишет в лог.
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 
+BOT_MODE = os.getenv("BOT_MODE", "polling").lower()  # "polling" или "webhook"
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "super-secret-token")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
+
 
 def require_env():
     """
@@ -85,6 +91,7 @@ def require_env():
 
 SCREENS = {}
 LOCALES = {}
+EXECUTOR = None
 DB_POOL = None  # инициализируется в init_db_pool() при старте main()
 HTTP_SESSION = requests.Session()  # Используется для TCP-соединений к Telegram
 _adapter = HTTPAdapter(pool_connections=20, pool_maxsize=20)
@@ -104,6 +111,10 @@ POLL_STALE_SECONDS = 120
 # Сколько апдейтов обрабатываем параллельно (разные чаты). Размер пула БД
 # считается от этого числа, чтобы спрос на соединения не превышал предложение.
 MAX_WORKERS = 12
+
+# Словарь для антифлуда: {(chat_id, trigger_key): timestamp}
+_NOTIFY_COOLDOWN = {}
+NOTIFY_COOLDOWN_SECONDS = 3600  # 1 час
 
 # --- Сериализация обработки по чату (защита от гонок на сессии) ---
 # Апдейты одного чата должны обрабатываться по одному: иначе два быстрых
@@ -300,6 +311,25 @@ def update_session(chat_id, **kwargs):
         # Клик просто не запомнится — при следующем сообщении сессия
         # подтянется в том виде, какой была до сбоя. Не критично.
 
+def send_lead_to_crm(chat_id, user_id, screen_id, action_name):
+    """Отправка информации о лиде на CRM-вебхук (для демонстрации на стенде)"""
+    webhook_url = os.getenv("CRM_WEBHOOK_URL")
+    if not webhook_url:
+        return  # Если в .env не задан адрес, просто пропускаем без ошибок
+        
+    payload = {
+        "chat_id": chat_id,
+        "user_id": user_id,
+        "screen_id": screen_id,
+        "action": action_name,
+        "source": "telegram_bot_uchet"
+    }
+    try:
+        # Отправляем POST-запрос с таймаутом, чтобы бот не завис
+        requests.post(webhook_url, json=payload, timeout=3)
+    except Exception as e:
+        print(f"⚠️ Ошибка отправки вебхука в CRM: {e}")
+
 # ==========================================
 # 3. TELEGRAM API
 # ==========================================
@@ -429,18 +459,28 @@ def get_text(lang, key):
     return LOCALES.get(lang, LOCALES.get("ru", {})).get(key, f"[{key}]")
 
 
-def notify_admin(text):
+def notify_admin(text, chat_id=None, trigger_key="default"):
     """
-    Сигнал в рабочий чат: технические сбои (BUG-2) и события, где человеку
-    может понадобиться помощь. Отправка не должна ломать основной сценарий —
-    любые ошибки только логируются. Если ADMIN_CHAT_ID не задан (этап P0),
-    достаточно записи в лог.
+    Уведомление менеджера/админа с защитой от флуда (не чаще 1 раза в час 
+    на конкретный chat_id по одному триггеру).
     """
     if not ADMIN_CHAT_ID:
         log.warning("notify_admin вызван, но ADMIN_CHAT_ID не задан: %s", text)
         return
+        
+    # Проверяем антифлуд, если передан chat_id и ключ триггера
+    if chat_id:
+        now = time.time()
+        cooldown_key = (chat_id, trigger_key)
+        last_sent = _NOTIFY_COOLDOWN.get(cooldown_key, 0)
+        
+        if now - last_sent < NOTIFY_COOLDOWN_SECONDS:
+            return  # Пропускаем, прошло меньше часа
+            
+        _NOTIFY_COOLDOWN[cooldown_key] = now
+        
     try:
-        tg_request("sendMessage", {"chat_id": ADMIN_CHAT_ID, "text": text})
+        tg_request("sendMessage", {"chat_id": ADMIN_CHAT_ID, "text": text, "parse_mode": "HTML"})
     except Exception:
         log.error("Не удалось уведомить админа", exc_info=True)
 
@@ -828,13 +868,24 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
     state["history"] = history
 
     # --- ОБЪЯСНЕНИЕ (DATA-1) ---
-    # Передаем полученный из Telegram реальный user_id и язык сессии 
-    # в функцию записи статистики при каждом нажатии любой inline-кнопки.
-    # ----------------------------
     log_event(chat_id, session.get("screen_id"), action, lang=session.get("lang"), user_id=user_id)
     
     # --- ВЫВОД В ТЕРМИНАЛ ДЛЯ ОТЛАДКИ ---
     print(f"👀 Юзер {user_id} нажал кнопку '{action}' на экране '{session.get('screen_id')}'")
+
+    # --- ТРИГГЕРЫ УВЕДОМЛЕНИЙ МЕНЕДЖЕРА (NOTIFY-1) ---
+    if action == "topic_payment":
+        notify_admin(
+            f"🔥 Пользователь (ID: <code>{user_id or chat_id}</code>) перешел на экран оплаты (topic_payment).",
+            chat_id=chat_id,
+            trigger_key="notify_payment"
+        )
+    elif action in ("topic_login", "login"):
+        notify_admin(
+            f"🔑 Пользователь (ID: <code>{user_id or chat_id}</code>) запросил вход/авторизацию.",
+            chat_id=chat_id,
+            trigger_key="notify_login"
+        )
 
     # --- Стек навигации ВЕРНУТЬСЯ (Задача B1) ---
     if action == "back":
@@ -854,7 +905,6 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
         new_lang = action.split("_")[-1]
         update_session(chat_id, lang=new_lang)
         
-        # Обязательно гасим крутилку на кнопке в Telegram
         if cb_id:
             tg_request("answerCallbackQuery", {"callback_query_id": cb_id})
 
@@ -868,7 +918,6 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
         new_lang = action.rsplit("_", 1)[-1]
         update_session(chat_id, lang=new_lang, screen_id="config")
         
-        # Обязательно гасим крутилку на кнопке в Telegram
         if cb_id:
             tg_request("answerCallbackQuery", {"callback_query_id": cb_id})
             
@@ -891,8 +940,6 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
                     },
                 )
         else:
-            # SUB_API_ERROR: ошибка на нашей стороне — не обвиняем пользователя
-            # и зовём админа проверить права бота в канале.
             if cb_id:
                 tg_request(
                     "answerCallbackQuery",
@@ -904,17 +951,25 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
                 )
             notify_admin(
                 f"getChatMember не работает для {detail}. "
-                "Проверьте, что бот — администратор канала."
+                "Проверьте, что бот — администратор канала.",
+                chat_id=chat_id,
+                trigger_key="sub_api_error"
             )
-    # --- Динамические ссылки (если они генерируются кодом) ---
+
+    # --- Динамические ссылки и трекинг лидов (LEAD-1) ---
     elif action in ["subscription_links", "social_links"]:
-        pass
+        log_event(chat_id, session.get("screen_id"), f"click_{action}", lang=session.get("lang"), user_id=user_id)
+        
+        # Шаг для стенда: отправка данных лида на CRM-вебхук
+        send_lead_to_crm(chat_id, user_id, session.get("screen_id"), action)
+        
+        # Гасим крутилку на кнопке
+        if cb_id:
+            tg_request("answerCallbackQuery", {"callback_query_id": cb_id})
 
     elif action == "send_cpe_hours_doc":
-        # 1. Сохраняем результат отправки (источник — bot_media.source_url)
         result = send_media(chat_id, CPE_HOURS_DOC_KEY, "sendDocument")
         
-        # 2. Если успешно, записываем ID сообщения в существующий механизм очистки
         if result and result.get("ok"):
             state["media_message_id"] = result["result"]["message_id"]
             update_session(chat_id, screen_state=json.dumps(state))
@@ -923,27 +978,15 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
             tg_request("answerCallbackQuery", {"callback_query_id": cb_id})
 
     elif action in ("faq_prev", "faq_next"):
-        # Листаем FAQ: меняем номер страницы в состоянии и перерисовываем тот
-        # же экран (без push в history — остаёмся на faq). Верхнюю границу
-        # страницы обрежет render по фактическому числу вопросов.
         page = state.get("page", 1)
         page = page + (1 if action == "faq_next" else -1)
         state["page"] = max(1, page)
         update_session(chat_id, screen_state=json.dumps(state))
         render(chat_id, "faq", message_id, lang=session["lang"])
 
-    elif action in ("settings_lang_ru", "settings_lang_kz"):
-        # Смена языка из «Настроек» (/settings): переключаем язык и
-        # перерисовываем тот же экран настроек уже на новом языке.
-        # «Вернуться» ведёт в главное меню (history = [main, config]).
-        new_lang = action.rsplit("_", 1)[-1]
-        update_session(chat_id, lang=new_lang)
-        render(chat_id, "config", message_id, lang=new_lang)
-
     elif action in SCREENS:
         navigate_to(chat_id, action, state, message_id, lang=session["lang"])
     else:
-        # Если кнопка неизвестна или устарела (нет в текущей карте экранов / логике)
         if cb_id:
             tg_request(
                 "answerCallbackQuery",
@@ -952,7 +995,15 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
                     "text": "⚠️ Меню обновилось, нажмите /start",
                     "show_alert": True,
                 },
-            )    
+            )
+#==================================================
+#МЕТКИ UTM
+#==================================================
+def build_join_url(base_url: str, chat_id: int, screen_id: str) -> str:
+    """Добавляет UTM-метки и идентификатор пользователя к внешней ссылке для трекинга лидов"""
+    # Если в ссылке уже есть параметры (?), разделяем через &, иначе через ?
+    separator = "&" if "?" in base_url else "?"
+    return f"{base_url}{separator}utm_source=telegram_bot&utm_medium=button&utm_campaign={screen_id}&chat_id={chat_id}"
 
 # ==========================================
 # 6. МАРШРУТИЗАТОР СОБЫТИЙ
@@ -1082,7 +1133,7 @@ def handle_update(update):
                     
                     if current_body_msg_id:
                         # Редактируем текущее меню, добавляя предупреждение[cite: 1]
-                        warning_text = get_text(lang, "use_menu_buttons", "⚠️ Пожалуйста, воспользуйтесь кнопками меню.")
+                        warning_text = get_text(lang, "use_menu_buttons") or "⚠️ Пожалуйста, воспользуйтесь кнопками меню."
                         render(
                             chat_id, 
                             screen_id, 
@@ -1165,11 +1216,87 @@ def health_check():
         (200 if healthy else 503),
     )
 
+@app.route(f"/tg/{WEBHOOK_SECRET}", methods=["POST"])
+def telegram_webhook():
+    """
+    Эндпоинт для приема обновлений от Telegram по вебхуку.
+    Проверяет секретный заголовок безопасности для защиты от поддельных запросов.
+    """
+    secret_header = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
+    if secret_header != WEBHOOK_SECRET:
+        log.warning("Попытка несанкционированного доступа к вебхуку с неверным секретом.")
+        return jsonify({"status": "unauthorized"}), 403
+
+    update = request.get_json(silent=True)
+    if update:
+        EXECUTOR.submit(handle_update, update)
+        
+    return jsonify({"status": "ok"}), 200
+
 
 def run_flask():
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
+def run_broadcast(broadcast_id: int, message_text: str):
+    """
+    Фоновый воркер для массовой рассылки с rate limit (~30 сообщений в секунду)
+    и обработкой блокировок (403 Forbidden).
+    """
+    print(f"🚀 Запуск рассылки #{broadcast_id}...")
+    
+    # Если пул еще не инициализирован (при вызове из консоли), поднимаем его на лету
+    global DB_POOL
+    if DB_POOL is None:
+        try:
+            init_db_pool()
+        except Exception as e:
+            print(f"❌ Не удалось инициализировать пул БД: {e}")
+            return
+
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT chat_id FROM bot_sessions WHERE is_blocked = FALSE")
+                users = cursor.fetchall()
+                
+                total = len(users)
+                cursor.execute(
+                    "UPDATE bot_broadcasts SET status = 'processing', total_recipients = %s WHERE id = %s",
+                    (total, broadcast_id)
+                )
+                conn.commit()
+                
+                sent_count = 0
+                failed_count = 0
+                
+                for row in users:
+                    chat_id = row[0]
+                    try:
+                        res = tg_request("sendMessage", {"chat_id": chat_id, "text": message_text, "parse_mode": "HTML"})
+                        
+                        if res and res.get("ok"):
+                            sent_count += 1
+                        else:
+                            error_code = res.get("error_code") if res else 0
+                            if error_code == 403:
+                                cursor.execute("UPDATE bot_sessions SET is_blocked = TRUE WHERE chat_id = %s", (chat_id,))
+                                conn.commit()
+                            failed_count += 1
+                    except Exception as e:
+                        print(f"⚠️ Ошибка отправки для {chat_id}: {e}")
+                        failed_count += 1
+                        
+                    time.sleep(0.04)
+                    
+                cursor.execute(
+                    "UPDATE bot_broadcasts SET status = 'completed', sent_count = %s, failed_count = %s, completed_at = CURRENT_TIMESTAMP WHERE id = %s",
+                    (sent_count, failed_count, broadcast_id)
+                )
+                conn.commit()
+                print(f"✅ Рассылка #{broadcast_id} завершена. Успешно: {sent_count}, Ошибок: {failed_count}")
+    except Exception as e:
+        print(f"❌ Ошибка в воркере рассылки: {e}")
 
 # ==========================================
 # 8. LONG POLLING
