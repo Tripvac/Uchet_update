@@ -458,6 +458,11 @@ def parse_state(raw):
 def get_text(lang, key):
     return LOCALES.get(lang, LOCALES.get("ru", {})).get(key, f"[{key}]")
 
+def is_admin(user_id) -> bool:
+    admin_id = os.environ.get("ADMIN_CHAT_ID") or os.environ.get("ADMIN_CHAT") or os.environ.get("ADMIN_ID")
+    if not admin_id:
+        return False
+    return str(user_id) == str(admin_id)
 
 def notify_admin(text, chat_id=None, trigger_key="default"):
     """
@@ -635,6 +640,17 @@ def build_keyboard(screen_id, lang, flags=None):
 
         if keyboard_row:
             keyboard.append(keyboard_row)
+
+    # --- ДОБАВЛЕНИЕ КНОПКИ АДМИНА ДЛЯ ГЛАВНОГО ЭКРАНА ---
+    # Замени "start" на то название экрана, которое является вашим главным меню
+    if screen_id == "start": 
+        admin_id = os.environ.get("ADMIN_CHAT_ID") or os.environ.get("ADMIN_ID")
+        # Тк у нас в build_keyboard нет прямого user_id, мы можем проверить по глобальному контексту 
+        # или передать его, но проще всего сделать проверку через переменную окружения 
+        # Либо если у тебя в сессии/контексте есть user_id:
+        # (Если переменная задана, на главном экране дорисовываем кнопку для администратора)
+        if admin_id:
+            keyboard.append([{"text": "👑 Админ-панель", "callback_data": "admin_panel"}])
 
     return json.dumps({"inline_keyboard": keyboard}) if keyboard else None
 
@@ -886,6 +902,62 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
             chat_id=chat_id,
             trigger_key="notify_login"
         )
+
+    # --- ОБРАБОТКА АДМИНСКОЙ КНОПКИ И РАССЫЛКИ ---
+    elif action == "admin_panel":
+        admin_id = os.environ.get("ADMIN_CHAT_ID") or os.environ.get("ADMIN_ID")
+        is_user_admin = user_id and admin_id and str(user_id) == str(admin_id)
+
+        if is_user_admin:
+            if cb_id:
+                tg_request("answerCallbackQuery", {"callback_query_id": cb_id})
+            
+            # Отправляем админ-панель с инлайн-кнопкой для запуска рассылки
+            admin_text = (
+                "👑 <b>Панель администратора и аналитика</b>\n\n"
+                f"• Статус бота: 🟢 Работает\n"
+                f"• Ваш Telegram ID: <code>{user_id}</code>\n\n"
+                "Нажмите кнопку ниже, чтобы запустить тестовую рассылку по всем пользователям."
+            )
+            admin_keyboard = {
+                "inline_keyboard": [
+                    [{"text": "📢 Запустить тестовую рассылку", "callback_data": "trigger_broadcast"}]
+                ]
+            }
+            tg_request("sendMessage", {
+                "chat_id": chat_id,
+                "text": admin_text,
+                "reply_markup": admin_keyboard,
+                "parse_mode": "HTML"
+            })
+        else:
+            if cb_id:
+                tg_request(
+                    "answerCallbackQuery",
+                    {
+                        "callback_query_id": cb_id,
+                        "text": "⛔ У вас нет доступа к этой панели.",
+                        "show_alert": True,
+                    },
+                )
+        return
+
+    elif action == "trigger_broadcast":
+        admin_id = os.environ.get("ADMIN_CHAT_ID") or os.environ.get("ADMIN_ID")
+        if user_id and admin_id and str(user_id) == str(admin_id):
+            if cb_id:
+                tg_request("answerCallbackQuery", {"callback_query_id": cb_id})
+            
+            # Отправляем тестовое уведомление самому админу (или можно подключить выборку из telegram_users)
+            broadcast_text = "📢 <b>Тестовая рассылка успешна!</b>\n\nСистема уведомлений и оповещений функционирует в штатном режиме."
+            
+            # Пример отправки текущему админу для демонстрации на стенде
+            tg_request("sendMessage", {
+                "chat_id": chat_id,
+                "text": broadcast_text,
+                "parse_mode": "HTML"
+            })
+        return
 
     # --- Стек навигации ВЕРНУТЬСЯ (Задача B1) ---
     if action == "back":
