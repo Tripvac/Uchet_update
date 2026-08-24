@@ -583,7 +583,6 @@ def normalize_link(raw):
         return raw
     return f"https://{raw}"
 
-
 def build_keyboard(screen_id, lang, flags=None):
     screen_data = SCREENS.get(screen_id)
     if not screen_data:
@@ -641,15 +640,12 @@ def build_keyboard(screen_id, lang, flags=None):
         if keyboard_row:
             keyboard.append(keyboard_row)
 
-    # --- ДОБАВЛЕНИЕ КНОПКИ АДМИНА ДЛЯ ГЛАВНОГО ЭКРАНА ---
-    # Замени "start" на то название экрана, которое является вашим главным меню
-    if screen_id == "start": 
-        admin_id = os.environ.get("ADMIN_CHAT_ID") or os.environ.get("ADMIN_ID")
-        # Тк у нас в build_keyboard нет прямого user_id, мы можем проверить по глобальному контексту 
-        # или передать его, но проще всего сделать проверку через переменную окружения 
-        # Либо если у тебя в сессии/контексте есть user_id:
-        # (Если переменная задана, на главном экране дорисовываем кнопку для администратора)
-        if admin_id:
+    # --- УНИВЕРСАЛЬНОЕ ДОБАВЛЕНИЕ КНОПКИ АДМИНА ---
+    admin_id = os.environ.get("ADMIN_CHAT_ID") or os.environ.get("ADMIN_ID")
+    if admin_id:
+        # Добавляем кнопку на основные экраны меню, чтобы она гарантированно появилась
+        main_screens = ("start", "main", "menu", "socials", "subscription", "config")
+        if screen_id in main_screens:
             keyboard.append([{"text": "👑 Админ-панель", "callback_data": "admin_panel"}])
 
     return json.dumps({"inline_keyboard": keyboard}) if keyboard else None
