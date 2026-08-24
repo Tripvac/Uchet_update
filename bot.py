@@ -960,8 +960,6 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
     elif action == "trigger_broadcast":
         admin_id = os.environ.get("ADMIN_CHAT_ID") or os.environ.get("ADMIN_ID")
         if user_id and admin_id and str(user_id) == str(admin_id):
-            if cb_id:
-                tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "🚀 Запуск рассылки..."})
             
             broadcast_text = "📢 <b>Тестовая рассылка из таблицы bot_broadcasts!</b>\n\nСистема массовых уведомлений успешно протестирована на защите проекта."
             
@@ -975,7 +973,7 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
             sent_count = 1
             failed_count = 0
             
-            # Отправка сообщения
+            # Отправка тестового сообщения в чат
             res = tg_request("sendMessage", {
                 "chat_id": chat_id,
                 "text": broadcast_text,
@@ -992,12 +990,13 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
             except Exception as e:
                 print("Ошибка обновления статуса в БД:", e)
 
-            # Отправка отчета администратору
-            tg_request("sendMessage", {
-                "chat_id": chat_id,
-                "text": f"✅ <b>Рассылка завершена!</b>\n\n• Статус в БД: <code>completed</code>\n• Успешно отправлено: {sent_count}\n• Ошибок: {failed_count}",
-                "parse_mode": "HTML"
-            })
+            # Выдаем красивое всплывающее окно вместо спама сообщениями в чат
+            if cb_id:
+                tg_request("answerCallbackQuery", {
+                    "callback_query_id": cb_id,
+                    "text": f"✅ Рассылка завершена!\n\n• Статус: completed\n• Отправлено: {sent_count}\n• Ошибок: {failed_count}",
+                    "show_alert": True
+                })
         return
 
     # --- Стек навигации ВЕРНУТЬСЯ (Задача B1) ---
