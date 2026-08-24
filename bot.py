@@ -485,7 +485,21 @@ def notify_admin(text, chat_id=None, trigger_key="default"):
         _NOTIFY_COOLDOWN[cooldown_key] = now
         
     try:
-        tg_request("sendMessage", {"chat_id": ADMIN_CHAT_ID, "text": text, "parse_mode": "HTML"})
+        res = tg_request("sendMessage", {"chat_id": ADMIN_CHAT_ID, "text": text, "parse_mode": "HTML"})
+        
+        # Если сообщение успешно ушло админу, удаляем его через 3 секунды
+        if res and res.get("ok"):
+            sent_msg_id = res["result"]["message_id"]
+            
+            def delete_notification():
+                try:
+                    time.sleep(3)
+                    tg_request("deleteMessage", {"chat_id": ADMIN_CHAT_ID, "message_id": sent_msg_id})
+                except Exception:
+                    pass
+                    
+            threading.Thread(target=delete_notification, daemon=True).start()
+            
     except Exception:
         log.error("Не удалось уведомить админа", exc_info=True)
 
