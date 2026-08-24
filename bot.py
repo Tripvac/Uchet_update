@@ -965,7 +965,6 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
             
             # 1. Шаг для БД: Создание записи в bot_broadcasts
             try:
-                # Если потребуется, здесь можно подключить курсор БД для записи статуса 'processing'
                 pass
             except Exception as e:
                 print("Ошибка записи рассылки в БД:", e)
@@ -973,14 +972,27 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
             sent_count = 1
             failed_count = 0
             
-            # Отправка тестового сообщения в чат
+            # Отправляем сообщение в чат
             res = tg_request("sendMessage", {
                 "chat_id": chat_id,
                 "text": broadcast_text,
                 "parse_mode": "HTML"
             })
             
-            if not res or not res.get("ok"):
+            if res and res.get("ok"):
+                sent_msg_id = res["result"]["message_id"]
+                
+                # Функция, которая удалит сообщение через 3 секунды
+                def delete_later():
+                    try:
+                        time.sleep(3)
+                        tg_request("deleteMessage", {"chat_id": chat_id, "message_id": sent_msg_id})
+                    except Exception:
+                        pass
+                
+                # Запускаем в фоновом потоке, чтобы бот не зависал
+                threading.Thread(target=delete_later, daemon=True).start()
+            else:
                 failed_count += 1
                 sent_count = 0
 
@@ -990,12 +1002,12 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
             except Exception as e:
                 print("Ошибка обновления статуса в БД:", e)
 
-            # Выдаем красивое всплывающее окно вместо спама сообщениями в чат
+            # Выдаем аккуратное всплывающее подтверждение на кнопке
             if cb_id:
                 tg_request("answerCallbackQuery", {
                     "callback_query_id": cb_id,
-                    "text": f"✅ Рассылка завершена!\n\n• Статус: completed\n• Отправлено: {sent_count}\n• Ошибок: {failed_count}",
-                    "show_alert": True
+                    "text": f"✅ Рассылка отправлена! (Отправлено: {sent_count})",
+                    "show_alert": False
                 })
         return
 
