@@ -748,7 +748,7 @@ def render(chat_id, screen_id, message_id=None, extra_text="", lang=None):
     # больше не уронит отрисовку, а <b>/<i>/<a> продолжают работать.
     base_text = sanitize_html(base_text)
 
-    reply_markup = build_keyboard(screen_id, lang, faq_flags)
+    reply_markup = build_keyboard(screen_id, lang, faq_flags, user_id=chat_id)
 
     if message_id:
         res = tg_request(
