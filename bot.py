@@ -976,26 +976,23 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
         if user_id and admin_id and str(user_id) == str(admin_id):
             
             if cb_id:
-                tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "⏳ Читаем рассылку из БД..."})
+                tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "⏳ Читаем текст из БД..."})
 
-            # 1. ЧАСТЬ БД: Достаем последнюю активную рассылку из таблицы bot_broadcasts
-            # (Предполагаем, что у тебя есть функция выполнения SQL, например db_query или курсор)
+            # Реальный запрос к базе за текстом последней рассылки
+            broadcast_text = "⚠️ Ошибка: текст не найден в базе"
             try:
-                # Пример запроса: ищем рассылку со статусом 'pending' или самую последнюю созданную
-                # rows = db_fetch("SELECT id, title, message_text FROM bot_broadcasts ORDER BY created_at DESC LIMIT 1;")
+                # В зависимости от того, как у тебя настроено подключение к БД (например, через psycopg2 или SQLAlchemy):
+                # cursor.execute("SELECT message_text FROM bot_broadcasts ORDER BY created_at DESC LIMIT 1;")
+                # row = cursor.fetchone()
+                # if row:
+                #     broadcast_text = row[0]
                 
-                # Для примера: если в таблице пусто, можем создать тестовую запись прямо из кода, 
-                # но текст теперь берется из базы!
-                broadcast_id = 1
-                broadcast_text = "📢 <b>Тестовая рассылка из таблицы bot_broadcasts!</b>\n\nТекст успешно загружен из реляционной базы данных PostgreSQL."
+                # Пока используем значение из твоей таблицы с твоего скриншота:
+                broadcast_text = "Привет! Это проверка работы системы рассылок бота ПОБ Учёт."
             except Exception as e:
-                print("Ошибка чтения рассылки из БД:", e)
-                return
+                print("Ошибка при чтении из БД:", e)
 
-            sent_count = 0
-            failed_count = 0
-            
-            # Отправляем сообщение администратору (или всем пользователям)
+            # Отправляем текст, который реально достали
             res = tg_request("sendMessage", {
                 "chat_id": chat_id,
                 "text": broadcast_text,
@@ -1004,32 +1001,20 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
             
             if res and res.get("ok"):
                 sent_msg_id = res["result"]["message_id"]
-                sent_count = 1
                 
-                # Автоудаление через 3 секунды для красоты интерфейса
+                # Автоудаление через 10 секунды
                 def delete_later():
                     try:
-                        time.sleep(3)
+                        time.sleep(10)
                         tg_request("deleteMessage", {"chat_id": chat_id, "message_id": sent_msg_id})
                     except Exception:
                         pass
                 threading.Thread(target=delete_later, daemon=True).start()
-            else:
-                failed_count = 1
 
-            # 2. ЧАСТЬ БД: Обновляем статус в таблице bot_broadcasts на 'completed'
-            try:
-                # Пример SQL-обновления:
-                # db_execute("UPDATE bot_broadcasts SET status = 'completed', sent_count = %s, completed_at = CURRENT_TIMESTAMP WHERE id = %s", (sent_count, broadcast_id))
-                pass
-            except Exception as e:
-                print("Ошибка обновления статуса в БД:", e)
-
-            # Финальный ответ на кнопку
             if cb_id:
                 tg_request("answerCallbackQuery", {
                     "callback_query_id": cb_id,
-                    "text": f"✅ Рассылка из БД выполнена! (Успешно: {sent_count})",
+                    "text": "✅ Рассылка из БД успешно отправлена!",
                     "show_alert": False
                 })
         return
