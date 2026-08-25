@@ -989,7 +989,8 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
                         if row and row[0]:
                             broadcast_text = row[0] # Забрали реальный текст из БД!
             except Exception as e:
-                print("Ошибка при чтении из базы данных:", e)
+                print("❌ ОШИБКА БД:", e)
+                broadcast_text = f"⚠️ Ошибка БД: {e}"
 
             # Отправляем этот текст админу
             res = tg_request("sendMessage", {
