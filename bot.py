@@ -970,6 +970,8 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
                     },
                 )
         return
+
+    
     elif action == "trigger_broadcast":
         admin_id = os.environ.get("ADMIN_CHAT_ID") or os.environ.get("ADMIN_ID")
         if user_id and admin_id and str(user_id) == str(admin_id):
@@ -979,7 +981,7 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
 
             broadcast_text = "⚠️ Ошибка: не удалось прочитать таблицу bot_broadcasts"
             
-            # Достаем текст последней рассылки из базы данных
+            # 👇 ЭТОТ БЛОК КОДА НУЖНО ВСТАВИТЬ
             try:
                 db_url = os.environ.get("DATABASE_URL")
                 with psycopg2.connect(db_url) as conn:
@@ -987,10 +989,11 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
                         cur.execute("SELECT message_text FROM bot_broadcasts ORDER BY created_at DESC LIMIT 1;")
                         row = cur.fetchone()
                         if row and row[0]:
-                            broadcast_text = row[0] # Забрали реальный текст из БД!
+                            broadcast_text = row[0] # Забираем текст из базы данных!
             except Exception as e:
                 print("❌ ОШИБКА БД:", e)
                 broadcast_text = f"⚠️ Ошибка БД: {e}"
+            # 👆 КОНЕЦ БЛОКА
 
             # Отправляем этот текст админу
             res = tg_request("sendMessage", {
@@ -1002,7 +1005,7 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
             if res and res.get("ok"):
                 sent_msg_id = res["result"]["message_id"]
                 
-                # Автоудаление через 3 секунды для красоты
+                # Автоудаление через 3 секунды
                 def delete_later():
                     try:
                         time.sleep(3)
@@ -1014,11 +1017,11 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
             if cb_id:
                 tg_request("answerCallbackQuery", {
                     "callback_query_id": cb_id,
-                    "text": "✅ Рассылка успешно отправлена из БД!",
+                    "text": "✅ Успешно отправлено из БД!",
                     "show_alert": False
                 })
         return
-
+    
     # --- Стек навигации ВЕРНУТЬСЯ (Задача B1) ---
     if action == "back":
         cleanup_pending_media(chat_id, state)
