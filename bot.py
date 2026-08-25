@@ -970,29 +970,28 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
                     },
                 )
         return
-
     elif action == "trigger_broadcast":
         admin_id = os.environ.get("ADMIN_CHAT_ID") or os.environ.get("ADMIN_ID")
         if user_id and admin_id and str(user_id) == str(admin_id):
             
             if cb_id:
-                tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "⏳ Читаем текст из БД..."})
+                tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "⏳ Загрузка текста из БД..."})
 
-            # Реальный запрос к базе за текстом последней рассылки
-            broadcast_text = "⚠️ Ошибка: текст не найден в базе"
+            broadcast_text = "⚠️ Ошибка: не удалось прочитать таблицу bot_broadcasts"
+            
+            # Достаем текст последней рассылки из базы данных
             try:
-                # В зависимости от того, как у тебя настроено подключение к БД (например, через psycopg2 или SQLAlchemy):
-                # cursor.execute("SELECT message_text FROM bot_broadcasts ORDER BY created_at DESC LIMIT 1;")
-                # row = cursor.fetchone()
-                # if row:
-                #     broadcast_text = row[0]
-                
-                # Пока используем значение из твоей таблицы с твоего скриншота:
-                broadcast_text = "Привет! Это проверка работы системы рассылок бота ПОБ Учёт."
+                db_url = os.environ.get("DATABASE_URL")
+                with psycopg2.connect(db_url) as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT message_text FROM bot_broadcasts ORDER BY created_at DESC LIMIT 1;")
+                        row = cur.fetchone()
+                        if row and row[0]:
+                            broadcast_text = row[0] # Забрали реальный текст из БД!
             except Exception as e:
-                print("Ошибка при чтении из БД:", e)
+                print("Ошибка при чтении из базы данных:", e)
 
-            # Отправляем текст, который реально достали
+            # Отправляем этот текст админу
             res = tg_request("sendMessage", {
                 "chat_id": chat_id,
                 "text": broadcast_text,
@@ -1002,10 +1001,10 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
             if res and res.get("ok"):
                 sent_msg_id = res["result"]["message_id"]
                 
-                # Автоудаление через 10 секунды
+                # Автоудаление через 3 секунды для красоты
                 def delete_later():
                     try:
-                        time.sleep(10)
+                        time.sleep(3)
                         tg_request("deleteMessage", {"chat_id": chat_id, "message_id": sent_msg_id})
                     except Exception:
                         pass
@@ -1014,7 +1013,7 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
             if cb_id:
                 tg_request("answerCallbackQuery", {
                     "callback_query_id": cb_id,
-                    "text": "✅ Рассылка из БД успешно отправлена!",
+                    "text": "✅ Рассылка успешно отправлена из БД!",
                     "show_alert": False
                 })
         return
