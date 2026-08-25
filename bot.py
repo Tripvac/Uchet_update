@@ -970,7 +970,6 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
                     },
                 )
         return
-
     
     elif action == "trigger_broadcast":
         admin_id = os.environ.get("ADMIN_CHAT_ID") or os.environ.get("ADMIN_ID")
@@ -981,19 +980,27 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
 
             broadcast_text = "⚠️ Ошибка: не удалось прочитать таблицу bot_broadcasts"
             
-            # 👇 ЭТОТ БЛОК КОДА НУЖНО ВСТАВИТЬ
+            # 👇 ПОДКЛЮЧЕНИЕ ЧЕРЕЗ ТВОИ ОТДЕЛЬНЫЕ ПЕРЕМЕННЫЕ ИЗ .ENV
             try:
-                db_url = os.environ.get("DATABASE_URL")
-                with psycopg2.connect(db_url) as conn:
+                conn = psycopg2.connect(
+                    host=os.environ.get("DB_HOST"),
+                    database=os.environ.get("DB_NAME"),
+                    user=os.environ.get("DB_USER"),
+                    password=os.environ.get("DB_PASSWORD"),
+                    port=os.environ.get("DB_PORT", "5432"),
+                    sslmode=os.environ.get("DB_SSLMODE", "require")
+                )
+                
+                with conn:
                     with conn.cursor() as cur:
                         cur.execute("SELECT message_text FROM bot_broadcasts ORDER BY created_at DESC LIMIT 1;")
                         row = cur.fetchone()
                         if row and row[0]:
-                            broadcast_text = row[0] # Забираем текст из базы данных!
+                            broadcast_text = row[0] # Забираем текст из твоей таблицы в Neon!
+                conn.close()
             except Exception as e:
                 print("❌ ОШИБКА БД:", e)
                 broadcast_text = f"⚠️ Ошибка БД: {e}"
-            # 👆 КОНЕЦ БЛОКА
 
             # Отправляем этот текст админу
             res = tg_request("sendMessage", {
@@ -1005,10 +1012,10 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
             if res and res.get("ok"):
                 sent_msg_id = res["result"]["message_id"]
                 
-                # Автоудаление через 3 секунды
+                # Автоудаление через 10 секунды
                 def delete_later():
                     try:
-                        time.sleep(3)
+                        time.sleep(10)
                         tg_request("deleteMessage", {"chat_id": chat_id, "message_id": sent_msg_id})
                     except Exception:
                         pass
@@ -1021,7 +1028,7 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
                     "show_alert": False
                 })
         return
-    
+        
     # --- Стек навигации ВЕРНУТЬСЯ (Задача B1) ---
     if action == "back":
         cleanup_pending_media(chat_id, state)
