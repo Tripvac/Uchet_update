@@ -943,11 +943,11 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
                 "👑 <b>Панель администратора и аналитика</b>\n\n"
                 f"• Статус бота: 🟢 Работает\n"
                 f"• Ваш Telegram ID: <code>{user_id}</code>\n\n"
-                "Нажмите кнопку ниже, чтобы запустить тестовую рассылку по всем пользователям."
+                "Нажмите кнопку ниже, чтобы написать текст для рассылки всем пользователям."
             )
             admin_keyboard = {
                 "inline_keyboard": [
-                    [{"text": "📢 Запустить тестовую рассылку", "callback_data": "trigger_broadcast"}]
+                    [{"text": "📝 Написать и отправить рассылку", "callback_data": "prepare_broadcast"}]
                 ]
             }
             res = tg_request("sendMessage", {
@@ -960,74 +960,23 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
             if res and res.get("ok"):
                 state["admin_panel_msg_id"] = res["result"]["message_id"]
                 update_session(chat_id, screen_state=json.dumps(state))
-        else:
-            if cb_id:
-                tg_request(
-                    "answerCallbackQuery",
-                    {
-                        "callback_query_id": cb_id,
-                        "text": "⛔ У вас нет доступа к этой панели.",
-                        "show_alert": True,
-                    },
-                )
         return
     
-    elif action == "trigger_broadcast":
+    elif action == "prepare_broadcast":
+        # Переводим админа в режим ввода текста
         admin_id = os.environ.get("ADMIN_CHAT_ID") or os.environ.get("ADMIN_ID")
         if user_id and admin_id and str(user_id) == str(admin_id):
-            
             if cb_id:
-                tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "⏳ Загрузка текста из БД..."})
-
-            broadcast_text = "⚠️ Ошибка: не удалось прочитать таблицу bot_broadcasts"
+                tg_request("answerCallbackQuery", {"callback_query_id": cb_id})
             
-            # 👇 ПОДКЛЮЧЕНИЕ ЧЕРЕЗ ТВОИ ОТДЕЛЬНЫЕ ПЕРЕМЕННЫЕ ИЗ .ENV
-            try:
-                conn = psycopg2.connect(
-                    host=os.environ.get("DB_HOST"),
-                    database=os.environ.get("DB_NAME"),
-                    user=os.environ.get("DB_USER"),
-                    password=os.environ.get("DB_PASSWORD"),
-                    port=os.environ.get("DB_PORT", "5432"),
-                    sslmode=os.environ.get("DB_SSLMODE", "require")
-                )
-                
-                with conn:
-                    with conn.cursor() as cur:
-                        cur.execute("SELECT message_text FROM bot_broadcasts ORDER BY created_at DESC LIMIT 1;")
-                        row = cur.fetchone()
-                        if row and row[0]:
-                            broadcast_text = row[0] # Забираем текст из твоей таблицы в Neon!
-                conn.close()
-            except Exception as e:
-                print("❌ ОШИБКА БД:", e)
-                broadcast_text = f"⚠️ Ошибка БД: {e}"
-
-            # Отправляем этот текст админу
-            res = tg_request("sendMessage", {
+            state["admin_state"] = "waiting_for_broadcast"
+            update_session(chat_id, screen_state=json.dumps(state))
+            
+            tg_request("sendMessage", {
                 "chat_id": chat_id,
-                "text": broadcast_text,
+                "text": "✏️ <b>Отправьте текст для массовой рассылки следующим сообщением.</b>\n\n<i>(Для отмены нажмите /start)</i>",
                 "parse_mode": "HTML"
             })
-            
-            if res and res.get("ok"):
-                sent_msg_id = res["result"]["message_id"]
-                
-                # Автоудаление через 10 секунды
-                def delete_later():
-                    try:
-                        time.sleep(10)
-                        tg_request("deleteMessage", {"chat_id": chat_id, "message_id": sent_msg_id})
-                    except Exception:
-                        pass
-                threading.Thread(target=delete_later, daemon=True).start()
-
-            if cb_id:
-                tg_request("answerCallbackQuery", {
-                    "callback_query_id": cb_id,
-                    "text": "✅ Успешно отправлено из БД!",
-                    "show_alert": False
-                })
         return
         
     # --- Стек навигации ВЕРНУТЬСЯ (Задача B1) ---
@@ -1258,6 +1207,42 @@ def handle_update(update):
                 elif text.startswith("/settings"):
                     _handle_settings(chat_id, session)
                 else:
+                    # Проверяем, не находится ли админ в режиме ввода рассылки
+                    state_dict = json.loads(session["screen_state"]) if isinstance(session["screen_state"], str) else session["screen_state"]
+                    admin_id = os.environ.get("ADMIN_CHAT_ID") or os.environ.get("ADMIN_ID")
+                    
+                    if user_id and admin_id and str(user_id) == str(admin_id) and state_dict.get("admin_state") == "waiting_for_broadcast":
+                        # Сбрасываем состояние ожидания
+                        state_dict.pop("admin_state", None)
+                        update_session(chat_id, screen_state=json.dumps(state_dict))
+                        
+                        if text:
+                            try:
+                                # Сами записываем текст в БД
+                                with get_db_connection() as conn:
+                                    with conn.cursor() as cur:
+                                        cur.execute(
+                                            "INSERT INTO bot_broadcasts (message_text, status) VALUES (%s, 'pending') RETURNING id",
+                                            (text,)
+                                        )
+                                        broadcast_id = cur.fetchone()[0]
+                                
+                                # Запускаем РЕАЛЬНУЮ рассылку в фоновом потоке
+                                threading.Thread(target=run_broadcast, args=(broadcast_id, text), daemon=True).start()
+                                
+                                tg_request("sendMessage", {
+                                    "chat_id": chat_id,
+                                    "text": f"✅ <b>Текст принят!</b>\nМассовая рассылка #{broadcast_id} успешно запущена.",
+                                    "parse_mode": "HTML"
+                                })
+                            except Exception as e:
+                                log.error("Ошибка при старте рассылки: %s", e)
+                                tg_request("sendMessage", {"chat_id": chat_id, "text": f"⚠️ Ошибка БД: {e}"})
+                        else:
+                            tg_request("sendMessage", {"chat_id": chat_id, "text": "⚠️ Ошибка: принимается только текст. Рассылка отменена."})
+                        return # Прерываем дальнейшую обработку, чтобы сообщение не удалилось
+                    
+                    # --- Стандартная обработка мусорных сообщений ---
                     lang = session["lang"]
                     
                     # 1. Сразу удаляем сообщение пользователя (мусор, текст, стикер, ГС, кружок)
@@ -1268,12 +1253,12 @@ def handle_update(update):
                         except Exception:
                             pass
                             
-                    # 2. Берем ID текущего сообщения меню и редактируем его прямо на месте[cite: 1]
+                    # 2. Берем ID текущего сообщения меню и редактируем его прямо на месте
                     current_body_msg_id = session.get("body_message_id")
                     screen_id = session.get("screen_id")
                     
                     if current_body_msg_id:
-                        # Редактируем текущее меню, добавляя предупреждение[cite: 1]
+                        # Редактируем текущее меню, добавляя предупреждение
                         warning_text = get_text(lang, "use_menu_buttons") or "⚠️ Пожалуйста, воспользуйтесь кнопками меню."
                         render(
                             chat_id, 
@@ -1283,7 +1268,7 @@ def handle_update(update):
                             lang=lang
                         )
                         
-                        # 3. Через 3 секунды в фоновом потоке убираем предупреждение, возвращая меню в исходный вид[cite: 1]
+                        # 3. Через 3 секунды в фоновом потоке убираем предупреждение, возвращая меню в исходный вид
                         def clear_warning(c_id, s_id, m_id, l_code):
                             time.sleep(3)
                             render(c_id, s_id, message_id=m_id, lang=l_code)
@@ -1302,7 +1287,7 @@ def handle_update(update):
             chat_id = cb["message"]["chat"]["id"]
             
             # --- ОБЪЯСНЕНИЕ (DATA-1) ---
-            # То же самое делаем для кликов по кнопкам (callback_query).[cite: 1]
+            # То же самое делаем для кликов по кнопкам (callback_query).
             # ----------------------------
             user_id = cb["from"]["id"] 
             
@@ -1324,8 +1309,7 @@ def handle_update(update):
 
     except Exception:
         log.error("Необработанная ошибка при обработке апдейта", exc_info=True)
-        # Не даём одному сбойному апдейту уронить весь polling-цикл[cite: 1]
-
+        # Не даём одному сбойному апдейту уронить весь polling-цикл
 # ==========================================
 # 7. FLASK SERVER (SSO)
 # ==========================================
