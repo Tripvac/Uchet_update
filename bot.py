@@ -984,6 +984,7 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
                 "inline_keyboard": [
                     [{"text": "📝 Написать рассылку", "callback_data": "prepare_broadcast"}],
                     [{"text": "📥 Выгрузить базу в CSV (Excel)", "callback_data": "export_csv"}],
+                    [{"text": "📊 Выгрузить аналитику кликов", "callback_data": "export_analytics"}],
                     [{"text": "❌ Закрыть панель", "callback_data": "close_message"}]
                 ]
             }
@@ -1079,6 +1080,65 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
             except Exception as e:
                 print(f"Ошибка выгрузки CSV: {e}")
                 tg_request("sendMessage", {"chat_id": chat_id, "text": f"⚠️ Ошибка при формировании файла: {e}"})
+        return
+
+    elif action == "export_analytics":
+        admin_id = os.environ.get("ADMIN_CHAT_ID") or os.environ.get("ADMIN_ID")
+        if user_id and admin_id and str(user_id) == str(admin_id):
+            if cb_id:
+                tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "⏳ Собираю аналитику, секунду..."})
+            
+            try:
+                import csv
+                import io
+                
+                # Забираем последние 10 000 кликов (чтобы файл грузился мгновенно)
+                with get_db_connection() as conn:
+                    with conn.cursor() as cur:
+                        # Если в твоей таблице время называется по-другому, просто скажи мне
+                        cur.execute("""
+                            SELECT chat_id, screen_id, button_id, lang 
+                            FROM bot_events 
+                            ORDER BY id DESC 
+                            LIMIT 10000
+                        """)
+                        events = cur.fetchall()
+                
+                # Создаем CSV файл в памяти
+                output = io.StringIO()
+                writer = csv.writer(output, delimiter=';') # Снова используем точку с запятой для Excel
+                writer.writerow(["Chat ID", "Screen (Экран)", "Button (Кнопка)", "Language"]) # Заголовки
+                
+                for e in events:
+                    # e[0]=chat_id, e[1]=screen_id, e[2]=button_id, e[3]=lang
+                    btn = e[2] if e[2] else "none"
+                    lang_val = e[3] if e[3] else "ru"
+                    writer.writerow([e[0], e[1], btn, lang_val])
+                
+                csv_bytes = output.getvalue().encode('utf-8-sig')
+                
+                # Клавиатура для файла, чтобы тоже можно было удалить или вернуться
+                back_keyboard = json.dumps({
+                    "inline_keyboard": [
+                        [{"text": "🔙 Вернуться в админку", "callback_data": "admin_panel"}],
+                        [{"text": "❌ Закрыть файл", "callback_data": "close_message"}]
+                    ]
+                })
+                
+                # Отправляем файл админу
+                requests.post(
+                    API_URL + "sendDocument",
+                    data={
+                        "chat_id": chat_id, 
+                        "caption": "📊 <b>Аналитика кликов готова!</b>\nЗдесь собраны последние 10 000 действий пользователей.", 
+                        "parse_mode": "HTML",
+                        "reply_markup": back_keyboard
+                    },
+                    files={"document": ("Bot_Analytics.csv", csv_bytes)}
+                )
+            except Exception as e:
+                log.error("Ошибка выгрузки аналитики: %s", e)
+                tg_request("sendMessage", {"chat_id": chat_id, "text": f"⚠️ Ошибка при формировании аналитики: {e}"})
         return
         
     # --- Стек навигации ВЕРНУТЬСЯ (Задача B1) ---
