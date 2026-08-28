@@ -974,7 +974,7 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
             
             tg_request("sendMessage", {
                 "chat_id": chat_id,
-                "text": "✏️ <b>Отправьте текст для массовой рассылки следующим сообщением.</b>\n\n<i>(Для отмены нажмите /start)</i>",
+                "text": "✏️ <b>Отправьте текст для массовой рассылки следующим сообщением.</b>\n\n<i>(Для отмены напишите слово <b>Отмена</b> или <b>/back</b>)</i>",
                 "parse_mode": "HTML"
             })
         return
@@ -1212,18 +1212,28 @@ def handle_update(update):
                     admin_id = os.environ.get("ADMIN_CHAT_ID") or os.environ.get("ADMIN_ID")
                     
                     if user_id and admin_id and str(user_id) == str(admin_id) and state_dict.get("admin_state") == "waiting_for_broadcast":
+                        
+                        # --- ОБРАБОТКА ОТМЕНЫ ---
+                        if text and text.strip().lower() in ("back", "/back", "отмена", "cancel", "/cancel"):
+                            state_dict.pop("admin_state", None)
+                            update_session(chat_id, screen_state=json.dumps(state_dict))
+                            tg_request("sendMessage", {"chat_id": chat_id, "text": "🚫 Режим рассылки отменен."})
+                            # Отрисовываем текущее меню заново, чтобы админ просто вернулся обратно
+                            render(chat_id, session.get("screen_id"), lang=session["lang"])
+                            return
+
                         # Сбрасываем состояние ожидания
                         state_dict.pop("admin_state", None)
                         update_session(chat_id, screen_state=json.dumps(state_dict))
                         
                         if text:
                             try:
-                                # Сами записываем текст в БД
+                                # ИСПРАВЛЕНИЕ ОШИБКИ БД: добавляем колонку title ("Быстрая рассылка")
                                 with get_db_connection() as conn:
                                     with conn.cursor() as cur:
                                         cur.execute(
-                                            "INSERT INTO bot_broadcasts (message_text, status) VALUES (%s, 'pending') RETURNING id",
-                                            (text,)
+                                            "INSERT INTO bot_broadcasts (title, message_text, status) VALUES (%s, %s, 'pending') RETURNING id",
+                                            ("Быстрая рассылка", text)
                                         )
                                         broadcast_id = cur.fetchone()[0]
                                 
@@ -1240,7 +1250,7 @@ def handle_update(update):
                                 tg_request("sendMessage", {"chat_id": chat_id, "text": f"⚠️ Ошибка БД: {e}"})
                         else:
                             tg_request("sendMessage", {"chat_id": chat_id, "text": "⚠️ Ошибка: принимается только текст. Рассылка отменена."})
-                        return # Прерываем дальнейшую обработку, чтобы сообщение не удалилось
+                        return # Прерываем дальнейшую обработку, чтобы сообщение не удалилось # Прерываем дальнейшую обработку, чтобы сообщение не удалилось
                     
                     # --- Стандартная обработка мусорных сообщений ---
                     lang = session["lang"]
