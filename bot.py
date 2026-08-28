@@ -925,6 +925,7 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
         )
 
     # --- ОБРАБОТКА АДМИНСКОЙ КНОПКИ И РАССЫЛКИ ---
+    # --- ОБРАБОТКА АДМИНСКОЙ КНОПКИ И РАССЫЛКИ ---
     elif action == "admin_panel":
         admin_id = os.environ.get("ADMIN_CHAT_ID") or os.environ.get("ADMIN_ID")
         is_user_admin = user_id and admin_id and str(user_id) == str(admin_id)
@@ -939,15 +940,39 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
                 except Exception:
                     pass
 
+            # --- СЧИТАЕМ ЖИВУЮ СТАТИСТИКУ ИЗ БД ---
+            total_users, active_users, blocked_users = 0, 0, 0
+            try:
+                with get_db_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("""
+                            SELECT 
+                                COUNT(*), 
+                                SUM(CASE WHEN is_blocked = FALSE THEN 1 ELSE 0 END), 
+                                SUM(CASE WHEN is_blocked = TRUE THEN 1 ELSE 0 END) 
+                            FROM bot_sessions
+                        """)
+                        row = cur.fetchone()
+                        if row:
+                            total_users = row[0] or 0
+                            active_users = row[1] or 0
+                            blocked_users = row[2] or 0
+            except Exception as e:
+                log.error("Ошибка загрузки статистики: %s", e)
+
             admin_text = (
                 "👑 <b>Панель администратора и аналитика</b>\n\n"
-                f"• Статус бота: 🟢 Работает\n"
                 f"• Ваш Telegram ID: <code>{user_id}</code>\n\n"
-                "Нажмите кнопку ниже, чтобы написать текст для рассылки всем пользователям."
+                f"📊 <b>Живая статистика базы:</b>\n"
+                f"👥 Всего пользователей: <b>{total_users}</b>\n"
+                f"✅ Активных (получат рассылку): <b>{active_users}</b>\n"
+                f"❌ Заблокировали бота: <b>{blocked_users}</b>\n\n"
+                "Выберите действие ниже:"
             )
             admin_keyboard = {
                 "inline_keyboard": [
-                    [{"text": "📝 Написать и отправить рассылку", "callback_data": "prepare_broadcast"}]
+                    [{"text": "📝 Написать рассылку", "callback_data": "prepare_broadcast"}],
+                    [{"text": "📥 Выгрузить базу в CSV (Excel)", "callback_data": "export_csv"}]
                 ]
             }
             res = tg_request("sendMessage", {
