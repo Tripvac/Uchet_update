@@ -1003,6 +1003,46 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
                 "parse_mode": "HTML"
             })
         return
+    
+    elif action == "export_csv":
+        admin_id = os.environ.get("ADMIN_CHAT_ID") or os.environ.get("ADMIN_ID")
+        if user_id and admin_id and str(user_id) == str(admin_id):
+            if cb_id:
+                tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "⏳ Собираю данные, секунду..."})
+            
+            try:
+                import csv
+                import io
+                
+                # Достаем всех юзеров из базы
+                with get_db_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT chat_id, lang, is_blocked, updated_at FROM bot_sessions ORDER BY updated_at DESC")
+                        users = cur.fetchall()
+                
+                # Создаем файлик CSV в памяти
+                output = io.StringIO()
+                writer = csv.writer(output, delimiter=';') # Точка с запятой лучше открывается в русском Excel
+                writer.writerow(["Chat ID", "Language", "Blocked Bot", "Last Activity"]) # Заголовки
+                
+                for u in users:
+                    # u[0]=chat_id, u[1]=lang, u[2]=is_blocked, u[3]=updated_at
+                    blocked_status = "Yes" if u[2] else "No"
+                    last_active = str(u[3])[:19] if u[3] else "Unknown"
+                    writer.writerow([u[0], u[1], blocked_status, last_active])
+                
+                csv_bytes = output.getvalue().encode('utf-8-sig') # utf-8-sig чтобы Excel сразу понял кириллицу
+                
+                # Отправляем прямо в телеграм отдельным файлом
+                requests.post(
+                    API_URL + "sendDocument",
+                    data={"chat_id": chat_id, "caption": "✅ <b>Ваша выгрузка базы готова!</b>\nФайл можно открыть в Excel.", "parse_mode": "HTML"},
+                    files={"document": ("Users_base.csv", csv_bytes)}
+                )
+            except Exception as e:
+                print(f"Ошибка выгрузки CSV: {e}")
+                tg_request("sendMessage", {"chat_id": chat_id, "text": f"⚠️ Ошибка при формировании файла: {e}"})
+        return
         
     # --- Стек навигации ВЕРНУТЬСЯ (Задача B1) ---
     if action == "back":
