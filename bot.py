@@ -972,7 +972,8 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
             admin_keyboard = {
                 "inline_keyboard": [
                     [{"text": "📝 Написать рассылку", "callback_data": "prepare_broadcast"}],
-                    [{"text": "📥 Выгрузить базу в CSV (Excel)", "callback_data": "export_csv"}]
+                    [{"text": "📥 Выгрузить базу в CSV (Excel)", "callback_data": "export_csv"}],
+                    [{"text": "❌ Закрыть панель", "callback_data": "close_message"}]
                 ]
             }
             res = tg_request("sendMessage", {
@@ -985,6 +986,24 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
             if res and res.get("ok"):
                 state["admin_panel_msg_id"] = res["result"]["message_id"]
                 update_session(chat_id, screen_state=json.dumps(state))
+        return
+    
+    elif action == "close_message":
+        # Убираем часики загрузки
+        if cb_id:
+            tg_request("answerCallbackQuery", {"callback_query_id": cb_id})
+        
+        # Удаляем само сообщение с кнопкой
+        try:
+            tg_request("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
+        except Exception:
+            pass
+            
+        # Если это была админка, очистим ее ID в сессии для порядка
+        if admin_msg_id and str(admin_msg_id) == str(message_id):
+            state.pop("admin_panel_msg_id", None)
+            update_session(chat_id, screen_state=json.dumps(state))
+            
         return
     
     elif action == "prepare_broadcast":
@@ -1032,11 +1051,18 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
                     writer.writerow([u[0], u[1], blocked_status, last_active])
                 
                 csv_bytes = output.getvalue().encode('utf-8-sig') # utf-8-sig чтобы Excel сразу понял кириллицу
-                
+
+                # Создаем клавиатуру для файла
+                back_keyboard = json.dumps({
+                    "inline_keyboard": [
+                        [{"text": "🔙 Вернуться в админку", "callback_data": "admin_panel"}],
+                        [{"text": "❌ Закрыть файл", "callback_data": "close_message"}]
+                    ]
+                })
                 # Отправляем прямо в телеграм отдельным файлом
                 requests.post(
                     API_URL + "sendDocument",
-                    data={"chat_id": chat_id, "caption": "✅ <b>Ваша выгрузка базы готова!</b>\nФайл можно открыть в Excel.", "parse_mode": "HTML"},
+                    data={"chat_id": chat_id, "caption": "✅ <b>Ваша выгрузка базы готова!</b>\nФайл можно открыть в Excel.", "parse_mode": "HTML", "reply_markup": back_keyboard},
                     files={"document": ("Users_base.csv", csv_bytes)}
                 )
             except Exception as e:
