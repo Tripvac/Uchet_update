@@ -926,6 +926,7 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
 
     # --- ОБРАБОТКА АДМИНСКОЙ КНОПКИ И РАССЫЛКИ ---
     # --- ОБРАБОТКА АДМИНСКОЙ КНОПКИ И РАССЫЛКИ ---
+    # --- ОБРАБОТКА АДМИНСКОЙ КНОПКИ И РАССЫЛКИ ---
     elif action == "admin_panel":
         admin_id = os.environ.get("ADMIN_CHAT_ID") or os.environ.get("ADMIN_ID")
         is_user_admin = user_id and admin_id and str(user_id) == str(admin_id)
@@ -934,14 +935,24 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
             if cb_id:
                 tg_request("answerCallbackQuery", {"callback_query_id": cb_id})
             
+            # 1. Удаляем старую админ-панель, если она висит
             if admin_msg_id:
                 try:
                     tg_request("deleteMessage", {"chat_id": chat_id, "message_id": admin_msg_id})
                 except Exception:
                     pass
 
+            # 2. НОВОЕ: Если мы нажали "Вернуться в админку" на файле CSV, удаляем этот файл
+            body_msg_id = session.get("body_message_id")
+            if message_id and message_id != body_msg_id and message_id != admin_msg_id:
+                try:
+                    tg_request("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
+                except Exception:
+                    pass
+
             # --- СЧИТАЕМ ЖИВУЮ СТАТИСТИКУ ИЗ БД ---
             total_users, active_users, blocked_users = 0, 0, 0
+            # ... (дальше идет твой код с try, get_db_connection и т.д.)
             try:
                 with get_db_connection() as conn:
                     with conn.cursor() as cur:
