@@ -655,8 +655,9 @@ def build_keyboard(screen_id, lang, flags=None, user_id=None):
             keyboard.append(keyboard_row)
 
     # --- ДОБАВЛЕНИЕ КНОПКИ АДМИНА ТОЛЬКО ДЛЯ АДМИНИСТРАТОРА ---
-    admin_id = os.environ.get("ADMIN_CHAT_ID") or os.environ.get("ADMIN_ID")
-    is_user_admin = user_id and admin_id and str(user_id) == str(admin_id)
+    admin_raw = os.environ.get("ADMIN_CHAT_ID", "") or os.environ.get("ADMIN_ID", "")
+    admin_ids = [x.strip() for x in admin_raw.split(",")]
+    is_user_admin = user_id and str(user_id) in admin_ids
     
     if is_user_admin:
         # Добавляем кнопку на главные экраны, но только если это твой ID
@@ -925,11 +926,10 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
         )
 
     # --- ОБРАБОТКА АДМИНСКОЙ КНОПКИ И РАССЫЛКИ ---
-    # --- ОБРАБОТКА АДМИНСКОЙ КНОПКИ И РАССЫЛКИ ---
-    # --- ОБРАБОТКА АДМИНСКОЙ КНОПКИ И РАССЫЛКИ ---
     elif action == "admin_panel":
-        admin_id = os.environ.get("ADMIN_CHAT_ID") or os.environ.get("ADMIN_ID")
-        is_user_admin = user_id and admin_id and str(user_id) == str(admin_id)
+        admin_raw = os.environ.get("ADMIN_CHAT_ID", "") or os.environ.get("ADMIN_ID", "")
+        admin_ids = [x.strip() for x in admin_raw.split(",")]
+        is_user_admin = user_id and str(user_id) in admin_ids
 
         if is_user_admin:
             if cb_id:
@@ -1020,8 +1020,9 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
     
     elif action == "prepare_broadcast":
         # Переводим админа в режим ввода текста
-        admin_id = os.environ.get("ADMIN_CHAT_ID") or os.environ.get("ADMIN_ID")
-        if user_id and admin_id and str(user_id) == str(admin_id):
+        admin_raw = os.environ.get("ADMIN_CHAT_ID", "") or os.environ.get("ADMIN_ID", "")
+        admin_ids = [x.strip() for x in admin_raw.split(",")]
+        if user_id and str(user_id) in admin_ids:
             if cb_id:
                 tg_request("answerCallbackQuery", {"callback_query_id": cb_id})
             
@@ -1036,8 +1037,9 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
         return
     
     elif action == "export_csv":
-        admin_id = os.environ.get("ADMIN_CHAT_ID") or os.environ.get("ADMIN_ID")
-        if user_id and admin_id and str(user_id) == str(admin_id):
+        admin_raw = os.environ.get("ADMIN_CHAT_ID", "") or os.environ.get("ADMIN_ID", "")
+        admin_ids = [x.strip() for x in admin_raw.split(",")]
+        if user_id and str(user_id) in admin_ids:
             if cb_id:
                 tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "⏳ Собираю данные, секунду..."})
             
@@ -1083,8 +1085,9 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
         return
 
     elif action == "export_analytics":
-        admin_id = os.environ.get("ADMIN_CHAT_ID") or os.environ.get("ADMIN_ID")
-        if user_id and admin_id and str(user_id) == str(admin_id):
+        admin_raw = os.environ.get("ADMIN_CHAT_ID", "") or os.environ.get("ADMIN_ID", "")
+        admin_ids = [x.strip() for x in admin_raw.split(",")]
+        if user_id and str(user_id) in admin_ids:
             if cb_id:
                 tg_request("answerCallbackQuery", {"callback_query_id": cb_id, "text": "⏳ Собираю аналитику, секунду..."})
             
