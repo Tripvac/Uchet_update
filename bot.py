@@ -1374,9 +1374,12 @@ def handle_update(update):
                 else:
                     # Проверяем, не находится ли админ в режиме ввода рассылки
                     state_dict = json.loads(session["screen_state"]) if isinstance(session["screen_state"], str) else session["screen_state"]
-                    admin_id = os.environ.get("ADMIN_CHAT_ID") or os.environ.get("ADMIN_ID")
                     
-                    if user_id and admin_id and str(user_id) == str(admin_id) and state_dict.get("admin_state") == "waiting_for_broadcast":
+                    # --- НОВОЕ: ПРОВЕРКА АДМИНА ЧЕРЕЗ ЗАПЯТУЮ ---
+                    admin_raw = os.environ.get("ADMIN_CHAT_ID", "") or os.environ.get("ADMIN_ID", "")
+                    admin_ids = [x.strip() for x in admin_raw.split(",") if x.strip()]
+                    
+                    if user_id and str(user_id) in admin_ids and state_dict.get("admin_state") == "waiting_for_broadcast":
                         
                         # --- ОБРАБОТКА ОТМЕНЫ ---
                         if text and text.strip().lower() in ("back", "/back", "отмена", "cancel", "/cancel"):
@@ -1415,7 +1418,7 @@ def handle_update(update):
                                 tg_request("sendMessage", {"chat_id": chat_id, "text": f"⚠️ Ошибка БД: {e}"})
                         else:
                             tg_request("sendMessage", {"chat_id": chat_id, "text": "⚠️ Ошибка: принимается только текст. Рассылка отменена."})
-                        return # Прерываем дальнейшую обработку, чтобы сообщение не удалилось # Прерываем дальнейшую обработку, чтобы сообщение не удалилось
+                        return # Прерываем дальнейшую обработку, чтобы сообщение не удалилось
                     
                     # --- Стандартная обработка мусорных сообщений ---
                     lang = session["lang"]
