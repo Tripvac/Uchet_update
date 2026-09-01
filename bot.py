@@ -1406,6 +1406,7 @@ def handle_update(update):
                                         broadcast_id = cur.fetchone()[0]
                                 
                                 # Запускаем РЕАЛЬНУЮ рассылку в фоновом потоке
+                                # Запускаем РЕАЛЬНУЮ рассылку в фоновом потоке
                                 threading.Thread(target=run_broadcast, args=(broadcast_id, text), daemon=True).start()
                                 
                                 tg_request("sendMessage", {
@@ -1413,6 +1414,10 @@ def handle_update(update):
                                     "text": f"✅ <b>Текст принят!</b>\nМассовая рассылка #{broadcast_id} успешно запущена.",
                                     "parse_mode": "HTML"
                                 })
+                                
+                                # --- ВОЗВРАЩАЕМ АДМИН-ПАНЕЛЬ ---
+                                handle_action("admin_panel", chat_id, msg.get("message_id"), session, cb_id=None, user_id=user_id)
+                                
                             except Exception as e:
                                 log.error("Ошибка при старте рассылки: %s", e)
                                 tg_request("sendMessage", {"chat_id": chat_id, "text": f"⚠️ Ошибка БД: {e}"})
