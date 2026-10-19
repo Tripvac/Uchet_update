@@ -138,7 +138,7 @@ def chat_lock(chat_id):
 # статистика некритична, память важнее.
 _EVENTS_QUEUE: "queue.Queue" = queue.Queue(maxsize=10000)
 
-KASPI_QR_MEDIA_KEY = "kaspi_qr"
+KASPI_QR_MEDIA_KEY = "kaspi_qr.png"
 KASPI_QR_LOCAL_PATH = "assets/kaspi_qr.png"
 
 CPE_HOURS_DOC_KEY = "cpe_hours_doc"
@@ -712,35 +712,23 @@ def render(chat_id, screen_id, message_id=None, extra_text="", lang=None):
 
     maybe_refresh_content_cache()
 
-    faq_flags = set()
+    # --- НОВЫЙ ПЕРЕХВАТЧИК ДЛЯ ВОПРОС-ОТВЕТ ---
     if screen_id == "faq":
-        # FAQ — динамический экран: текст не из bot_content, а из faq_items /
-        # faq_translations, постранично (FAQ_PAGE_SIZE вопросов на страницу).
-        st = get_session(chat_id)["screen_state"]
-        if isinstance(st, str):
-            st = json.loads(st)
-        page = st.get("page", 1)
-        entries = get_faq_entries(lang)
-        total = len(entries)
-        if total == 0:
-            base_text = get_text(lang, "faq_empty")
-        else:
-            total_pages = (total + FAQ_PAGE_SIZE - 1) // FAQ_PAGE_SIZE
-            page = max(1, min(page, total_pages))
-            start = (page - 1) * FAQ_PAGE_SIZE
-            chunk = entries[start:start + FAQ_PAGE_SIZE]
-            body = "\n\n".join(f"<b>{q}</b>\n{a}" for q, a in chunk)
-            base_text = f"{body}\n\n({page}/{total_pages})"
-            if page > 1:
-                faq_flags.add("faq_has_prev")
-            if page < total_pages:
-                faq_flags.add("faq_has_next")
-    else:
-        # Сначала смотрим в bot_content (редактируется админом через SQL),
-        # если экран там не заведён — берём текст из locales/*.json как раньше
-        base_text = CONTENT_CACHE.get((screen_id, lang))
-        if base_text is None:
-            base_text = get_text(lang, f"{screen_id}_text")
+        render_faq_screen(chat_id, message_id=message_id, view="main", extra_text=extra_text, lang=lang)
+        return
+
+    if screen_id == "ladder":
+        render_ladder_screen(chat_id, message_id=message_id, view="home", extra_text=extra_text, lang=lang)
+        return
+    # ------------------------------------------
+    # ------------------------------------------
+
+    faq_flags = set()
+    # Сначала смотрим в bot_content (редактируется админом через SQL),
+    # если экран там не заведён — берём текст из locales/*.json как раньше
+    base_text = CONTENT_CACHE.get((screen_id, lang))
+    if base_text is None:
+        base_text = get_text(lang, f"{screen_id}_text")
 
     if extra_text:
         base_text = base_text + "\n\n" + extra_text
@@ -814,6 +802,11 @@ def render(chat_id, screen_id, message_id=None, extra_text="", lang=None):
             )
             fresh_state["media_message_id"] = photo_result["result"]["message_id"]
             update_session(chat_id, screen_state=json.dumps(fresh_state))
+
+# ==========================================
+# 5. БИЗНЕС-ЛОГИКА И НАВИГАЦИЯ (Задачи B1, C1)
+
+    # Задача B
 
 
 # ==========================================
@@ -889,6 +882,300 @@ def _events_worker():
         finally:
             _EVENTS_QUEUE.task_done()
 
+# ==============================================================================
+# БЛОК ВОПРОС-ОТВЕТ (КОМПАКТНЫЙ МУЛЬТИЯЗЫЧНЫЙ КАРКАС)
+# ==============================================================================
+
+FAQ_URL_SITE = "https://pob.uchet.kz/"
+FAQ_URL_SIGNUP = "https://pob.uchet.kz/sign-up/"
+FAQ_URL_WA = "https://wa.clck.bar/77750392413"
+
+FAQ_TOPICS = {
+    "lk": ["lk_1", "lk_2", "lk_3"],
+    "fees": ["fees_1", "fees_2", "fees_3"],
+    "cpe": ["cpe_1", "cpe_2", "cpe_3", "cpe_4", "cpe_5"],
+    "join": ["join_1", "join_2"],
+}
+
+FAQ_QUESTIONS = {
+    "lk_1": {"topic": "lk", "btn_key": "faq_btn_site", "url": FAQ_URL_SITE},
+    "lk_2": {"topic": "lk", "btn_key": "faq_btn_site", "url": FAQ_URL_SITE},
+    "lk_3": {"topic": "lk", "btn_key": "faq_btn_manager", "url": FAQ_URL_WA},
+    "fees_1": {"topic": "fees", "btn_key": "faq_btn_receipt", "url": FAQ_URL_WA},
+    "fees_2": {"topic": "fees", "btn_key": "faq_btn_manager", "url": FAQ_URL_WA},
+    "fees_3": {"topic": "fees", "btn_key": "faq_btn_check", "url": FAQ_URL_WA},
+    "cpe_1": {"topic": "cpe", "btn_key": "faq_btn_site", "url": FAQ_URL_SITE},
+    "cpe_2": {"topic": "cpe", "btn_key": None},
+    "cpe_3": {"topic": "cpe", "btn_key": None},
+    "cpe_4": {"topic": "cpe", "btn_key": None},
+    "cpe_5": {"topic": "cpe", "btn_key": "faq_btn_manager", "url": FAQ_URL_WA},
+    "join_1": {"topic": "join", "btn_key": "faq_btn_signup", "url": FAQ_URL_SIGNUP},
+    "join_2": {"topic": "join", "btn_key": None},
+}
+
+def render_faq_screen(chat_id, message_id=None, view="main", item_key=None, extra_text="", lang=None):
+    """Отрисовывает экраны Вопрос-Ответ на нужном языке (ru/kz)"""
+    if not lang:
+        lang = get_session(chat_id).get("lang", "ru")
+
+    if view == "main":
+        text = get_text(lang, "faq_main_text")
+        kb = [
+            [{"text": get_text(lang, f"faq_t_{t}_btn"), "callback_data": f"faq_t:{t}"}]
+            for t in ("lk", "fees", "cpe", "join")
+        ]
+        kb.append([{"text": get_text(lang, "faq_btn_manager"), "url": FAQ_URL_WA}])
+        kb.append([{"text": get_text(lang, "faq_btn_back"), "callback_data": "back"}])
+
+    elif view == "topic" and item_key in FAQ_TOPICS:
+        text = get_text(lang, f"faq_t_{item_key}_header")
+        kb = [
+            [{"text": get_text(lang, f"faq_q_{q_id}_title"), "callback_data": f"faq_q:{q_id}"}]
+            for q_id in FAQ_TOPICS[item_key]
+        ]
+        kb.append([{"text": get_text(lang, "faq_back_to_topics"), "callback_data": "faq"}])
+
+    elif view == "question" and item_key in FAQ_QUESTIONS:
+        q_meta = FAQ_QUESTIONS[item_key]
+        text = get_text(lang, f"faq_q_{item_key}_answer")
+        kb = []
+        if q_meta.get("btn_key"):
+            kb.append([{"text": get_text(lang, q_meta["btn_key"]), "url": q_meta["url"]}])
+        kb.append([{"text": get_text(lang, "faq_back_to_questions"), "callback_data": f"faq_t:{q_meta['topic']}"}])
+        kb.append([{"text": get_text(lang, "faq_back_to_topics"), "callback_data": "faq"}])
+    else:
+        return
+
+    if extra_text:
+        text = f"{text}\n\n{extra_text}"
+
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML",
+        "reply_markup": {"inline_keyboard": kb},
+        "disable_web_page_preview": True
+    }
+
+    if message_id:
+        payload["message_id"] = message_id
+        res = tg_request("editMessageText", payload)
+        if not res or not res.get("ok"):
+            payload.pop("message_id", None)
+            res = tg_request("sendMessage", payload)
+            if res and res.get("ok"):
+                update_session(chat_id, body_message_id=res["result"]["message_id"])
+    else:
+        res = tg_request("sendMessage", payload)
+        if res and res.get("ok"):
+            update_session(chat_id, body_message_id=res["result"]["message_id"])
+
+# ==============================================================================
+# БЛОК 4.3: ЛЕСТНИЦА КОМПЕТЕНЦИЙ
+# ==============================================================================
+
+LADDER_URL_SIGNUP = "https://pob.uchet.kz/sign-up/"
+
+LADDER_LEVELS = [
+    {
+        "id": 1,
+        "url": "https://academy.uchet.kz/courses/azbuka-buhgaltera"
+    },
+    {
+        "id": 2,
+        "url": "https://academy.uchet.kz/courses/buhgalter-praktik"
+    },
+    {
+        "id": 3,
+        "url": "https://academy.uchet.kz/courses/professionalnyy-buhgalter-rk"
+    },
+    {
+        "id": 4,
+        "url": "https://academy.uchet.kz/courses/glavnyy-buhgalter"
+    },
+    {
+        "id": 5,
+        "url": "https://academy.uchet.kz/courses/acca-dipifr-diplom-po-msfo"
+    }
+]
+
+LADDER_TEST_QUESTIONS = [
+    [1, 2, 3, 4, 5], # Q1
+    [1, 2, 3, 4, 5], # Q2
+    [1, 2, 3, 4, 5], # Q3
+    [1, 2, 3, 4, 5], # Q4
+    [1, 2, 3, 4, 5]  # Q5
+]
+
+def render_ladder_screen(chat_id, message_id=None, view="home", level_id=1, q_idx=0, answers_str="", extra_text="", lang=None):
+    """Отрисовка экранов Лестницы компетенций (главная, ступень, маршрут, тест)"""
+    if not lang:
+        lang = get_session(chat_id).get("lang", "ru")
+
+    kb = []
+    text = ""
+
+    if view == "home":
+        text = get_text(lang, "ladder_title")
+        for lv in LADDER_LEVELS:
+            lvl_num = lv["id"]
+            title = get_text(lang, f"ladder_l{lvl_num}_title")
+            kb.append([{"text": f"{lvl_num}. {title}", "callback_data": f"lad_lvl:{lvl_num}"}])
+        kb.append([{"text": get_text(lang, "ladder_btn_test"), "callback_data": "lad_test:0:"}])
+        kb.append([{"text": get_text(lang, "faq_btn_back"), "callback_data": "back"}])
+
+    elif view == "level":
+        lv_data = next((x for x in LADDER_LEVELS if x["id"] == level_id), LADDER_LEVELS[0])
+        idx = level_id - 1
+        title = get_text(lang, f"ladder_l{level_id}_title")
+        pos = get_text(lang, f"ladder_l{level_id}_pos")
+        comp = get_text(lang, f"ladder_l{level_id}_comp")
+        req = get_text(lang, f"ladder_l{level_id}_req")
+        nxt = get_text(lang, f"ladder_l{level_id}_next")
+        
+        header = get_text(lang, "ladder_lvl_header").format(n=level_id, total=len(LADDER_LEVELS), title=title)
+        pos_str = f"\n<i>{pos}</i>" if pos else ""
+        
+        text = (
+            f"🪜 <b>{header}</b>{pos_str}\n\n"
+            f"<b>{get_text(lang, 'ladder_lbl_can')}</b>\n{comp}\n\n"
+            f"<b>{get_text(lang, 'ladder_lbl_req')}</b>\n{req}\n\n"
+            f"<b>{get_text(lang, 'ladder_lbl_next')}</b>\n{nxt}"
+        )
+
+        nav_row = []
+        if idx > 0:
+            nav_row.append({"text": get_text(lang, "ladder_btn_prev"), "callback_data": f"lad_lvl:{level_id-1}"})
+        if idx < len(LADDER_LEVELS) - 1:
+            nav_row.append({"text": get_text(lang, "ladder_btn_next"), "callback_data": f"lad_lvl:{level_id+1}"})
+        if nav_row:
+            kb.append(nav_row)
+
+        kb.append([{"text": get_text(lang, "ladder_btn_route"), "callback_data": f"lad_route:{level_id}"}])
+        kb.append([{"text": get_text(lang, "ladder_btn_join"), "url": LADDER_URL_SIGNUP}])
+        kb.append([{"text": get_text(lang, "faq_back_to_topics"), "callback_data": "ladder"}])
+
+    elif view == "route":
+        title = get_text(lang, f"ladder_l{level_id}_title")
+        route_text = get_text(lang, f"ladder_l{level_id}_route")
+        prog_title = get_text(lang, f"ladder_l{level_id}_prog")
+        url = next((x["url"] for x in LADDER_LEVELS if x["id"] == level_id), LADDER_URL_SIGNUP)
+
+        text = (
+            f"📚 <b>{get_text(lang, 'ladder_route_header')}</b>\n"
+            f"<i>{get_text(lang, 'ladder_route_level').format(n=level_id, title=title)}</i>\n\n"
+            f"{route_text}"
+        )
+        kb.append([{"text": prog_title, "url": url}])
+        kb.append([{"text": get_text(lang, "ladder_btn_back_to_level"), "callback_data": f"lad_lvl:{level_id}"}])
+        kb.append([{"text": get_text(lang, "faq_back_to_topics"), "callback_data": "ladder"}])
+
+    elif view == "test":
+        total_q = len(LADDER_TEST_QUESTIONS)
+        if q_idx < total_q:
+            q_num = q_idx + 1
+            q_text = get_text(lang, f"ladder_test_q{q_num}")
+            q_header = get_text(lang, "ladder_q_num").format(n=q_num, total=total_q)
+            
+            intro_prefix = f"{get_text(lang, 'ladder_test_intro')}\n\n" if q_idx == 0 else ""
+            text = f"{intro_prefix}<b>{q_header}</b>\n\n{q_text}"
+
+            for a_idx in range(1, 6):
+                ans_text = get_text(lang, f"ladder_test_q{q_num}_a{a_idx}")
+                next_ans_str = answers_str + str(a_idx)
+                kb.append([{"text": ans_text, "callback_data": f"lad_tstep:{q_idx+1}:{next_ans_str}"}])
+            kb.append([{"text": get_text(lang, "faq_back_to_topics"), "callback_data": "ladder"}])
+        else:
+            # Подсчет результата (медиана)
+            vals = sorted([int(c) for c in answers_str if c.isdigit()])
+            if vals:
+                res_level = vals[(len(vals) - 1) // 2]
+            else:
+                res_level = 1
+
+            lv_title = get_text(lang, f"ladder_l{res_level}_title")
+            next_step_desc = get_text(lang, f"ladder_l{res_level}_next")
+
+            res_template = get_text(lang, "ladder_test_result")
+            text = res_template.format(n=res_level, title=lv_title, next_step=next_step_desc)
+
+            kb.append([{"text": get_text(lang, "ladder_btn_open_level"), "callback_data": f"lad_lvl:{res_level}"}])
+            kb.append([{"text": get_text(lang, "ladder_btn_route"), "callback_data": f"lad_route:{res_level}"}])
+            kb.append([{"text": get_text(lang, "ladder_btn_retry"), "callback_data": "lad_test:0:"}])
+            kb.append([{"text": get_text(lang, "faq_back_to_topics"), "callback_data": "ladder"}])
+    else:
+        return
+
+    if extra_text:
+        text = f"{text}\n\n{extra_text}"
+
+    # ==========================================================
+    # --- ЛОГИКА ОТПРАВКИ: КАРТИНКА ИЛИ ТЕКСТ ---
+    # ==========================================================
+    if view == "home":
+        # Если перешли на "Главную", нам нужна КАРТИНКА с подписью. 
+        # Удаляем прошлое сообщение (оно могло быть текстовым, его нельзя отредактировать в фото).
+        if message_id:
+            try: tg_request("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
+            except Exception: pass
+            
+        payload = {
+            "chat_id": chat_id,
+            "caption": text,
+            "parse_mode": "HTML",
+            "reply_markup": {"inline_keyboard": kb}
+        }
+        
+        file_id, source_url = get_media("ladder_main_img")
+        res = None
+        
+        if file_id or source_url:
+            payload["photo"] = file_id or source_url
+            res = tg_request("sendPhoto", payload)
+            if res and res.get("ok") and not file_id:
+                save_file_id("ladder_main_img", extract_file_id(res, "photo"))
+                
+        # Если в БД картинки нет, грузим напрямую из папки assets
+        if not res or not res.get("ok"):
+            local_path = "assets/ladder_2.png"
+            if os.path.exists(local_path):
+                with open(local_path, "rb") as f:
+                    data = payload.copy()
+                    data["reply_markup"] = json.dumps(payload["reply_markup"])
+                    r = HTTP_SESSION.post(API_URL + "sendPhoto", data=data, files={"photo": f}, timeout=30)
+                    res = r.json()
+                    if res and res.get("ok"):
+                        save_file_id("ladder_main_img", extract_file_id(res, "photo"))
+                        
+        if res and res.get("ok"):
+            update_session(chat_id, body_message_id=res["result"]["message_id"])
+
+    else:
+        # Для всех остальных экранов (тесты, ступени) отправляем обычный ТЕКСТ
+        payload = {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "reply_markup": {"inline_keyboard": kb},
+            "disable_web_page_preview": True
+        }
+
+        if message_id:
+            payload["message_id"] = message_id
+            res = tg_request("editMessageText", payload)
+            # Если не вышло (например, пытались редактировать картинку), удаляем и шлем текстом
+            if not res or not res.get("ok"):
+                payload.pop("message_id", None)
+                try: tg_request("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
+                except Exception: pass
+                
+                res = tg_request("sendMessage", payload)
+                if res and res.get("ok"):
+                    update_session(chat_id, body_message_id=res["result"]["message_id"])
+        else:
+            res = tg_request("sendMessage", payload)
+            if res and res.get("ok"):
+                update_session(chat_id, body_message_id=res["result"]["message_id"])
 
 def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None):
     state = session["screen_state"] if isinstance(session["screen_state"], dict) else {}
@@ -952,7 +1239,6 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
 
             # --- СЧИТАЕМ ЖИВУЮ СТАТИСТИКУ ИЗ БД ---
             total_users, active_users, blocked_users = 0, 0, 0
-            # ... (дальше идет твой код с try, get_db_connection и т.д.)
             try:
                 with get_db_connection() as conn:
                     with conn.cursor() as cur:
@@ -1098,7 +1384,6 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
                 # Забираем последние 10 000 кликов (чтобы файл грузился мгновенно)
                 with get_db_connection() as conn:
                     with conn.cursor() as cur:
-                        # Если в твоей таблице время называется по-другому, просто скажи мне
                         cur.execute("""
                             SELECT chat_id, screen_id, button_id, lang 
                             FROM bot_events 
@@ -1109,18 +1394,16 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
                 
                 # Создаем CSV файл в памяти
                 output = io.StringIO()
-                writer = csv.writer(output, delimiter=';') # Снова используем точку с запятой для Excel
-                writer.writerow(["Chat ID", "Screen (Экран)", "Button (Кнопка)", "Language"]) # Заголовки
+                writer = csv.writer(output, delimiter=';')
+                writer.writerow(["Chat ID", "Screen (Экран)", "Button (Кнопка)", "Language"])
                 
                 for e in events:
-                    # e[0]=chat_id, e[1]=screen_id, e[2]=button_id, e[3]=lang
                     btn = e[2] if e[2] else "none"
                     lang_val = e[3] if e[3] else "ru"
                     writer.writerow([e[0], e[1], btn, lang_val])
                 
                 csv_bytes = output.getvalue().encode('utf-8-sig')
                 
-                # Клавиатура для файла, чтобы тоже можно было удалить или вернуться
                 back_keyboard = json.dumps({
                     "inline_keyboard": [
                         [{"text": "🔙 Вернуться в админку", "callback_data": "admin_panel"}],
@@ -1128,7 +1411,6 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
                     ]
                 })
                 
-                # Отправляем файл админу
                 requests.post(
                     API_URL + "sendDocument",
                     data={
@@ -1232,13 +1514,65 @@ def handle_action(action, chat_id, message_id, session, cb_id=None, user_id=None
         if cb_id:
             tg_request("answerCallbackQuery", {"callback_query_id": cb_id})
 
-    elif action in ("faq_prev", "faq_next"):
-        page = state.get("page", 1)
-        page = page + (1 if action == "faq_next" else -1)
-        state["page"] = max(1, page)
-        update_session(chat_id, screen_state=json.dumps(state))
-        render(chat_id, "faq", message_id, lang=session["lang"])
+    # --- НОВЫЙ РАЗДЕЛ ВОПРОС-ОТВЕТ (4.2.3) ---
+    elif action == "faq":
+        cleanup_pending_media(chat_id, state)
+        if not history or history[-1] != "faq":
+            history.append("faq")
+        state["history"] = history
+        update_session(chat_id, screen_id="faq", screen_state=json.dumps(state))
+        render_faq_screen(chat_id, message_id, view="main", lang=session.get("lang", "ru"))
+        return
 
+    elif action.startswith("faq_t:"):
+        topic_key = action.split(":", 1)[1]
+        render_faq_screen(chat_id, message_id, view="topic", item_key=topic_key, lang=session.get("lang", "ru"))
+        return
+
+    elif action.startswith("faq_q:"):
+        q_key = action.split(":", 1)[1]
+        render_faq_screen(chat_id, message_id, view="question", item_key=q_key, lang=session.get("lang", "ru"))
+        return
+
+    # ==========================================================
+    # --- НОВЫЙ РАЗДЕЛ ЛЕСТНИЦА КОМПЕТЕНЦИЙ (Блок 4.3) ---
+    # ==========================================================
+    elif action in ("ladder", "competence_ladder", "competency_ladder", "topic_ladder"):
+        cleanup_pending_media(chat_id, state)
+        if not history or history[-1] != "ladder":
+            history.append("ladder")
+        state["history"] = history
+        update_session(chat_id, screen_id="ladder", screen_state=json.dumps(state))
+        render_ladder_screen(chat_id, message_id, view="home", lang=session.get("lang", "ru"))
+        return
+
+    elif action.startswith("lad_lvl:"):
+        cleanup_pending_media(chat_id, state)
+        update_session(chat_id, screen_state=json.dumps(state))
+        
+        lvl_id = int(action.split(":", 1)[1])
+        render_ladder_screen(chat_id, message_id, view="level", level_id=lvl_id, lang=session.get("lang", "ru"))
+        return
+
+    elif action.startswith("lad_route:"):
+        cleanup_pending_media(chat_id, state)
+        update_session(chat_id, screen_state=json.dumps(state))
+        
+        lvl_id = int(action.split(":", 1)[1])
+        render_ladder_screen(chat_id, message_id, view="route", level_id=lvl_id, lang=session.get("lang", "ru"))
+        return
+
+    elif action.startswith("lad_test:") or action.startswith("lad_tstep:"):
+        cleanup_pending_media(chat_id, state)
+        update_session(chat_id, screen_state=json.dumps(state))
+        
+        parts = action.split(":")
+        q_idx = int(parts[1]) if len(parts) > 1 else 0
+        ans = parts[2] if len(parts) > 2 else ""
+        render_ladder_screen(chat_id, message_id, view="test", q_idx=q_idx, answers_str=ans, lang=session.get("lang", "ru"))
+        return
+    # ==========================================================
+    
     elif action in SCREENS:
         navigate_to(chat_id, action, state, message_id, lang=session["lang"])
     else:
@@ -1299,7 +1633,7 @@ def _handle_start(chat_id, session, user_id):
     render(chat_id, "language_select", lang=session["lang"])
 
 def _handle_faq(chat_id, session):
-    """Команда /faq: показать FAQ с первой страницы (новым сообщением)."""
+    """Команда /faq: показать новое меню Вопрос-Ответ (новым сообщением)."""
     state = (
         json.loads(session["screen_state"])
         if isinstance(session["screen_state"], str)
@@ -1310,8 +1644,9 @@ def _handle_faq(chat_id, session):
         msg_id = session.get(msg_key)
         if msg_id:
             tg_request("deleteMessage", {"chat_id": chat_id, "message_id": msg_id})
+            
     # history=[main, faq] → «Вернуться» из FAQ ведёт в главное меню
-    new_state = json.dumps({"page": 1, "history": ["main", "faq"]})
+    new_state = json.dumps({"history": ["main", "faq"]})
     update_session(
         chat_id,
         screen_id="faq",
@@ -1319,7 +1654,8 @@ def _handle_faq(chat_id, session):
         header_message_id=None,
         body_message_id=None,
     )
-    render(chat_id, "faq", lang=session["lang"])
+    # Отрисовываем новое меню тем Вопрос-Ответ с учетом языка пользователя
+    render_faq_screen(chat_id, message_id=None, view="main", lang=session.get("lang", "ru"))
 
 
 def _handle_settings(chat_id, session):
