@@ -750,8 +750,17 @@ def render(chat_id, screen_id, message_id=None, extra_text="", lang=None):
                 "parse_mode": "HTML",
             },
         )
-        # Этот if должен быть с отступом ВНУТРИ if message_id:
         if not res or not res.get("ok"):
+            # =======================================================
+            # НОВОЕ: Если редакция не удалась (например, это была картинка), 
+            # обязательно удаляем старое сообщение перед отправкой нового!
+            # =======================================================
+            try: 
+                tg_request("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
+            except Exception: 
+                pass
+            # =======================================================
+
             res_fallback = tg_request(
                 "sendMessage",
                 {
