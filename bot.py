@@ -797,28 +797,46 @@ def render(chat_id, screen_id, message_id=None, extra_text="", lang=None):
 
     # Задача B5 — на экране оплаты дополнительно шлём QR-код отдельной картинкой
     if screen_id == "topic_payment":
-        photo_result = send_media(
-            chat_id, KASPI_QR_MEDIA_KEY, "sendPhoto", local_path=KASPI_QR_LOCAL_PATH
-        )
-        if photo_result and photo_result.get("ok"):
-            # Запоминаем id этого сообщения в screen_state, чтобы удалить
-            # его позже, когда человек уйдёт с этого экрана
-            fresh_session = get_session(chat_id)
-            fresh_state = (
-                fresh_session["screen_state"]
-                if isinstance(fresh_session["screen_state"], dict)
-                else {}
-            )
-            fresh_state["media_message_id"] = photo_result["result"]["message_id"]
-            update_session(chat_id, screen_state=json.dumps(fresh_state))
-
-# ==========================================
-# 5. БИЗНЕС-ЛОГИКА И НАВИГАЦИЯ (Задачи B1, C1)
-
-    # Задача B
-
-
-# ==========================================
+        # Удаляем старое текстовое сообщение, так как его нельзя переделать в фото
+        if message_id:
+            try: tg_request("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
+            except Exception: pass
+            
+        payload = {
+            "chat_id": chat_id,
+            "caption": base_text,
+            "parse_mode": "HTML"
+        }
+        if reply_markup:
+            payload["reply_markup"] = json.loads(reply_markup)
+            
+        file_id, source_url = get_media(KASPI_QR_MEDIA_KEY)
+        res = None
+        
+        # Сначала пробуем отправить по ID или URL из базы
+        if file_id or source_url:
+            payload["photo"] = file_id or source_url
+            res = tg_request("sendPhoto", payload)
+            if res and res.get("ok") and not file_id:
+                save_file_id(KASPI_QR_MEDIA_KEY, extract_file_id(res, "photo"))
+                
+        # Если не вышло, грузим локальный файл assets/kaspi_qr.png
+        if not res or not res.get("ok"):
+            local_path = KASPI_QR_LOCAL_PATH
+            if os.path.exists(local_path):
+                with open(local_path, "rb") as f:
+                    data = payload.copy()
+                    if reply_markup:
+                        data["reply_markup"] = reply_markup
+                    r = HTTP_SESSION.post(API_URL + "sendPhoto", data=data, files={"photo": f}, timeout=30)
+                    res = r.json()
+                    if res and res.get("ok"):
+                        save_file_id(KASPI_QR_MEDIA_KEY, extract_file_id(res, "photo"))
+                        
+        if res and res.get("ok"):
+            update_session(chat_id, body_message_id=res["result"]["message_id"])
+        return  # Обязательный return, чтобы прервать обычную отправку текста
+    
 # 5. БИЗНЕС-ЛОГИКА И НАВИГАЦИЯ (Задачи B1, C1)
 # ==========================================
 def cleanup_pending_media(chat_id, state):
@@ -958,26 +976,72 @@ def render_faq_screen(chat_id, message_id=None, view="main", item_key=None, extr
     if extra_text:
         text = f"{text}\n\n{extra_text}"
 
-    payload = {
-        "chat_id": chat_id,
-        "text": text,
-        "parse_mode": "HTML",
-        "reply_markup": {"inline_keyboard": kb},
-        "disable_web_page_preview": True
-    }
-
-    if message_id:
-        payload["message_id"] = message_id
-        res = tg_request("editMessageText", payload)
+    # ==========================================================
+    # --- ЛОГИКА ОТПРАВКИ: ЕСЛИ РЕКВИЗИТЫ — ШЛЁМ ФОТО С QR ---
+    # ==========================================================
+    if view == "question" and item_key == "fees_3":
+        # Удаляем старое текстовое сообщение, так как его нельзя переделать в фото
+        if message_id:
+            try: tg_request("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
+            except Exception: pass
+            
+        payload = {
+            "chat_id": chat_id,
+            "caption": text,
+            "parse_mode": "HTML",
+            "reply_markup": {"inline_keyboard": kb}
+        }
+        
+        file_id, source_url = get_media(KASPI_QR_MEDIA_KEY)
+        res = None
+        
+        if file_id or source_url:
+            payload["photo"] = file_id or source_url
+            res = tg_request("sendPhoto", payload)
+            if res and res.get("ok") and not file_id:
+                save_file_id(KASPI_QR_MEDIA_KEY, extract_file_id(res, "photo"))
+                
+        # Если в БД картинки нет, грузим напрямую из папки assets
         if not res or not res.get("ok"):
-            payload.pop("message_id", None)
+            local_path = KASPI_QR_LOCAL_PATH
+            if os.path.exists(local_path):
+                with open(local_path, "rb") as f:
+                    data = payload.copy()
+                    data["reply_markup"] = json.dumps(payload["reply_markup"])
+                    r = HTTP_SESSION.post(API_URL + "sendPhoto", data=data, files={"photo": f}, timeout=30)
+                    res = r.json()
+                    if res and res.get("ok"):
+                        save_file_id(KASPI_QR_MEDIA_KEY, extract_file_id(res, "photo"))
+                        
+        if res and res.get("ok"):
+            update_session(chat_id, body_message_id=res["result"]["message_id"])
+
+    else:
+        # Для всех остальных вопросов FAQ отправляем обычный ТЕКСТ
+        payload = {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "reply_markup": {"inline_keyboard": kb},
+            "disable_web_page_preview": True
+        }
+
+        if message_id:
+            payload["message_id"] = message_id
+            res = tg_request("editMessageText", payload)
+            # Если не вышло (пытались редактировать картинку), удаляем и шлем текстом
+            if not res or not res.get("ok"):
+                payload.pop("message_id", None)
+                try: tg_request("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
+                except Exception: pass
+                
+                res = tg_request("sendMessage", payload)
+                if res and res.get("ok"):
+                    update_session(chat_id, body_message_id=res["result"]["message_id"])
+        else:
             res = tg_request("sendMessage", payload)
             if res and res.get("ok"):
                 update_session(chat_id, body_message_id=res["result"]["message_id"])
-    else:
-        res = tg_request("sendMessage", payload)
-        if res and res.get("ok"):
-            update_session(chat_id, body_message_id=res["result"]["message_id"])
 
 # ==============================================================================
 # БЛОК 4.3: ЛЕСТНИЦА КОМПЕТЕНЦИЙ
@@ -1121,9 +1185,11 @@ def render_ladder_screen(chat_id, message_id=None, view="home", level_id=1, q_id
     # ==========================================================
     # --- ЛОГИКА ОТПРАВКИ: КАРТИНКА ИЛИ ТЕКСТ ---
     # ==========================================================
+    # ==========================================================
+    # --- ЛОГИКА ОТПРАВКИ: КАРТИНКА ИЛИ ТЕКСТ ---
+    # ==========================================================
     if view == "home":
-        # Если перешли на "Главную", нам нужна КАРТИНКА с подписью. 
-        # Удаляем прошлое сообщение (оно могло быть текстовым, его нельзя отредактировать в фото).
+        # Удаляем прошлое сообщение, так как его нельзя отредактировать в фото
         if message_id:
             try: tg_request("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
             except Exception: pass
@@ -1135,18 +1201,25 @@ def render_ladder_screen(chat_id, message_id=None, view="home", level_id=1, q_id
             "reply_markup": {"inline_keyboard": kb}
         }
         
-        file_id, source_url = get_media("ladder_main_img")
+        # Определяем нужную картинку и ключ в зависимости от языка
+        if lang == "kz":
+            media_key = "ladder_kz"
+            local_path = "assets/ladder_kz.jpg"
+        else:
+            media_key = "ladder"
+            local_path = "assets/ladder.jpg"
+        
+        file_id, source_url = get_media(media_key)
         res = None
         
         if file_id or source_url:
             payload["photo"] = file_id or source_url
             res = tg_request("sendPhoto", payload)
             if res and res.get("ok") and not file_id:
-                save_file_id("ladder_main_img", extract_file_id(res, "photo"))
+                save_file_id(media_key, extract_file_id(res, "photo"))
                 
         # Если в БД картинки нет, грузим напрямую из папки assets
         if not res or not res.get("ok"):
-            local_path = "assets/ladder_2.png"
             if os.path.exists(local_path):
                 with open(local_path, "rb") as f:
                     data = payload.copy()
@@ -1154,7 +1227,7 @@ def render_ladder_screen(chat_id, message_id=None, view="home", level_id=1, q_id
                     r = HTTP_SESSION.post(API_URL + "sendPhoto", data=data, files={"photo": f}, timeout=30)
                     res = r.json()
                     if res and res.get("ok"):
-                        save_file_id("ladder_main_img", extract_file_id(res, "photo"))
+                        save_file_id(media_key, extract_file_id(res, "photo"))
                         
         if res and res.get("ok"):
             update_session(chat_id, body_message_id=res["result"]["message_id"])
@@ -1172,7 +1245,7 @@ def render_ladder_screen(chat_id, message_id=None, view="home", level_id=1, q_id
         if message_id:
             payload["message_id"] = message_id
             res = tg_request("editMessageText", payload)
-            # Если не вышло (например, пытались редактировать картинку), удаляем и шлем текстом
+            # Если не вышло (пытались редактировать картинку), удаляем и шлем текстом
             if not res or not res.get("ok"):
                 payload.pop("message_id", None)
                 try: tg_request("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
